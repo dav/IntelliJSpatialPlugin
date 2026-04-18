@@ -10,6 +10,9 @@ import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import dev.spatial.scene.CameraFocus
+import dev.spatial.scene.FocusEntity
+import dev.spatial.scene.Highlight
+import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import dev.spatial.service.SceneService
 import org.cef.browser.CefBrowser
@@ -81,9 +84,21 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         runInBrowser("window.Spatial.focus($json)")
     }
 
+    override fun onFocusEntity(req: FocusEntity) {
+        runInBrowser("window.Spatial.focusEntity(${SceneService.encode(req)})")
+    }
+
     override fun onSpeech(message: String) {
         val escaped = SceneService.JSON.encodeToString(kotlinx.serialization.serializer<String>(), message)
         runInBrowser("window.Spatial.speak($escaped)")
+    }
+
+    override fun onNarrate(req: Narrate) {
+        runInBrowser("window.Spatial.narrate(${SceneService.encode(req)})")
+    }
+
+    override fun onHighlight(req: Highlight) {
+        runInBrowser("window.Spatial.highlight(${SceneService.encode(req)})")
     }
 
     override fun dispose() {

@@ -151,7 +151,54 @@
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.spatialId = entity.id;
+    mesh.userData.baseColor = new THREE.Color(entity.color || '#9aa0a6');
     return mesh;
+  }
+
+  function makeLabelSprite(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.font = 'bold 56px -apple-system, "Segoe UI", sans-serif';
+    const padding = 24;
+    const metrics = ctx.measureText(text);
+    const textW = Math.min(canvas.width - padding * 2, metrics.width);
+    ctx.fillStyle = 'rgba(20, 21, 24, 0.82)';
+    const rx = (canvas.width - textW - padding * 2) / 2;
+    const ry = (canvas.height - 80) / 2;
+    ctx.beginPath();
+    ctx.roundRect(rx, ry, textW + padding * 2, 80, 12);
+    ctx.fill();
+    ctx.fillStyle = '#f1f3f5';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.renderOrder = 999;
+    sprite.scale.set(1.8, 0.45, 1);
+    return sprite;
+  }
+
+  function syncLabel(mesh, entity) {
+    const existing = mesh.userData.label;
+    if (existing && existing.text === (entity.label || '')) return;
+    if (existing) {
+      mesh.remove(existing.sprite);
+      existing.sprite.material.map.dispose();
+      existing.sprite.material.dispose();
+      mesh.userData.label = null;
+    }
+    if (!entity.label) return;
+    const sprite = makeLabelSprite(entity.label);
+    const scale = entity.scale || { x: 1, y: 1, z: 1 };
+    sprite.position.set(0, (scale.y || 1) * 0.7 + 0.45, 0);
+    // Counter-scale so a parent scale doesn't stretch the label.
+    sprite.scale.set(1.8 / (scale.x || 1), 0.45 / (scale.y || 1), 1);
+    mesh.add(sprite);
+    mesh.userData.label = { text: entity.label, sprite };
   }
 
   function applyTransform(mesh, entity) {
@@ -182,14 +229,20 @@
         entityRoot.add(mesh);
       } else {
         mesh.material.color.set(entity.color || '#9aa0a6');
+        mesh.userData.baseColor = mesh.material.color.clone();
         mesh.material.opacity = entity.opacity ?? 1;
         mesh.material.transparent = (entity.opacity ?? 1) < 1;
       }
       applyTransform(mesh, entity);
+      syncLabel(mesh, entity);
     });
     for (const id of Array.from(byId.keys())) {
       if (!seen.has(id)) {
         const mesh = byId.get(id);
+        if (mesh.userData.label) {
+          mesh.userData.label.sprite.material.map.dispose();
+          mesh.userData.label.sprite.material.dispose();
+        }
         entityRoot.remove(mesh);
         mesh.geometry.dispose();
         mesh.material.dispose();
@@ -260,5 +313,71 @@
     speechTimer = setTimeout(() => speech.classList.remove('visible'), 4000);
   }
 
-  window.Spatial = { setScene, focus, speak, recenter, fit };
+  // Lazy-load voices — Web Speech API fills the list asynchronously.
+  let cachedVoices = speechSynthesis.getVoices();
+  speechSynthesis.onvoiceschanged = () => { cachedVoices = speechSynthesis.getVoices(); };
+
+  function narrate(payload) {
+    if (!payload || !payload.text) return;
+    if (payload.caption !== false) speak(payload.text);
+    if (!('speechSynthesis' in window)) return;
+    const utter = new SpeechSynthesisUtterance(payload.text);
+    utter.rate = payload.rate || 1;
+    if (payload.voice) {
+      const match = cachedVoices.find((v) => v.name === payload.voice)
+        || cachedVoices.find((v) => v.name.toLowerCase().includes(String(payload.voice).toLowerCase()));
+      if (match) utter.voice = match;
+    }
+    // Let each new narrate line take over — tour stops shouldn't stack.
+    speechSynthesis.cancel();
+    speechSynthesis.speak(utter);
+  }
+
+  function focusEntity(payload) {
+    const mesh = byId.get(payload && payload.entityId);
+    if (!mesh) return;
+    const worldPos = new THREE.Vector3();
+    mesh.getWorldPosition(worldPos);
+    easeCamera(worldPos, payload.distance || 4, null, null, payload.durationMs != null ? payload.durationMs : 600);
+  }
+
+  const highlights = new Map(); // mesh → { rafId, prevEmissive, prevIntensity }
+  function highlight(payload) {
+    const ids = (payload && payload.entityIds) || [];
+    const dur = Math.max(100, (payload && payload.durationMs) || 1500);
+    const color = new THREE.Color((payload && payload.color) || '#ffffff');
+    const start = performance.now();
+    ids.forEach((id) => {
+      const mesh = byId.get(id);
+      if (!mesh || !mesh.material.emissive) return;
+      // Cancel any prior pulse on this mesh, restoring state first.
+      const prev = highlights.get(mesh);
+      if (prev) {
+        cancelAnimationFrame(prev.rafId);
+        mesh.material.emissive.copy(prev.prevEmissive);
+        mesh.material.emissiveIntensity = prev.prevIntensity;
+      }
+      const prevEmissive = mesh.material.emissive.clone();
+      const prevIntensity = mesh.material.emissiveIntensity;
+      mesh.material.emissive.copy(color);
+      function step(now) {
+        const t = Math.min(1, (now - start) / dur);
+        // Sinusoidal pulse: 0 → 1 → 0
+        const intensity = Math.sin(t * Math.PI) * 0.9;
+        mesh.material.emissiveIntensity = intensity;
+        if (t < 1) {
+          const rafId = requestAnimationFrame(step);
+          highlights.set(mesh, { rafId, prevEmissive, prevIntensity });
+        } else {
+          mesh.material.emissive.copy(prevEmissive);
+          mesh.material.emissiveIntensity = prevIntensity;
+          highlights.delete(mesh);
+        }
+      }
+      const rafId = requestAnimationFrame(step);
+      highlights.set(mesh, { rafId, prevEmissive, prevIntensity });
+    });
+  }
+
+  window.Spatial = { setScene, focus, focusEntity, speak, narrate, highlight, recenter, fit };
 })();

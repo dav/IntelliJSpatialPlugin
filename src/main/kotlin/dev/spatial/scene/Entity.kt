@@ -38,3 +38,25 @@ data class CameraFocus(
     val distance: Float = 5f,
     val durationMs: Int = 600,
 )
+
+@Serializable
+data class FocusEntity(
+    val entityId: String,
+    val distance: Float = 4f,
+    val durationMs: Int = 600,
+)
+
+@Serializable
+data class Highlight(
+    val entityIds: List<String>,
+    val durationMs: Int = 1500,
+    val color: String = "#ffffff",
+)
+
+@Serializable
+data class Narrate(
+    val text: String,
+    val voice: String? = null,
+    val rate: Float = 1f,
+    val caption: Boolean = true,
+)

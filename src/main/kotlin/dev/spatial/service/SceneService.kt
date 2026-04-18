@@ -4,6 +4,9 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
+import dev.spatial.scene.FocusEntity
+import dev.spatial.scene.Highlight
+import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -18,9 +21,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
 
     interface Listener {
-        fun onSceneChanged(scene: Scene)
-        fun onFocus(focus: CameraFocus)
-        fun onSpeech(message: String)
+        fun onSceneChanged(scene: Scene) {}
+        fun onFocus(focus: CameraFocus) {}
+        fun onFocusEntity(req: FocusEntity) {}
+        fun onSpeech(message: String) {}
+        fun onNarrate(req: Narrate) {}
+        fun onHighlight(req: Highlight) {}
     }
 
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -58,8 +64,20 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         listeners.forEach { it.onFocus(focus) }
     }
 
+    fun focusEntity(req: FocusEntity) {
+        listeners.forEach { it.onFocusEntity(req) }
+    }
+
     fun speak(message: String) {
         listeners.forEach { it.onSpeech(message) }
+    }
+
+    fun narrate(req: Narrate) {
+        listeners.forEach { it.onNarrate(req) }
+    }
+
+    fun highlight(req: Highlight) {
+        listeners.forEach { it.onHighlight(req) }
     }
 
     companion object {
@@ -68,6 +86,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
             encodeDefaults = true
         }
 
+        inline fun <reified T> encode(value: T): String = JSON.encodeToString(value)
         fun encodeScene(scene: Scene): String = JSON.encodeToString(scene)
         fun encodeFocus(focus: CameraFocus): String = JSON.encodeToString(focus)
     }
