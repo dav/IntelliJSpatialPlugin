@@ -1,0 +1,22 @@
+<!-- Plugin Configuration File. https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin require-restart="true">
+    <id>dev.spatial.intellij</id>
+    <name>Spatial</name>
+    <vendor url="https://github.com/your-org/IntelliJSpatialPlugin">Spatial Plugin Contributors</vendor>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.mcpServer</depends>
+
+    <resource-bundle>messages.SpatialBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Spatial"
+            anchor="right"
+            factoryClass="dev.spatial.ui.SpatialToolWindowFactory"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij.mcpServer">
+        <mcpToolset implementation="dev.spatial.mcp.SpatialToolset"/>
+    </extensions>
+</idea-plugin>
