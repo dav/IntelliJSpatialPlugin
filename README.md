@@ -1,19 +1,18 @@
 # Spatial — 3D scene tool window for JetBrains IDEs
 
-Spatial is an open-source IntelliJ Platform plugin that adds a 3D tool window
-to the IDE and exposes it to the built-in AI agent as an MCP skill. Agents can
-push raw geometry, semantic architecture maps, and churn landscapes; the plugin
-renders them with Three.js inside a JCEF browser so the user sees the project
+Spatial is an open-source plugin that adds a 3D visualization tool window
+to [JetBrains](https://www.jetbrains.com) IDEs exposed as an MCP skill. Agents
+are given commands tailored to push raw geometry, 
+[SaRF](https://arxiv.org/abs/1306.0958) maps, links, 
+[churn landscapes](https://codescene.io/docs/guides/technical/code-churn.html),
+project-structure scenes, feed-forward neural networks  ...really anything
+that the agents can come up with, and then walk you through the constructed scene
+using camera moves and narration; so project structure, call graphs, dependency
+trees, and other codebase artifacts can be visual instead of merely textual. 
+
+The plugin renders them with [Three.js](https://threejs.org) inside a 
+[JCEF](https://github.com/chromiumembedded/java-cef) browser so the user sees the project
 visualized alongside their code.
-
-<!-- Plugin description -->
-Spatial adds a 3D tool window to JetBrains IDEs. The IDE's built-in AI agent
-can drive it over MCP — pushing entities, SaRF maps, links, churn landscapes,
-project-structure platters, feed-forward neural networks, camera moves, and narration — so project structure, call graphs, dependency
-trees, and other codebase artifacts become visual instead of textual.
-
-Ships Three.js bundled offline. Requires a JetBrains IDE with JCEF.
-<!-- Plugin description end -->
 
 <img width="1503" height="926" alt="Screenshot 2026-04-19 at 12 23 19 AM" src="https://github.com/user-attachments/assets/cc4756e2-f425-4765-a074-e96231a84b34" />
 
