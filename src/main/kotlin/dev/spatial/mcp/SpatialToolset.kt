@@ -16,6 +16,8 @@ import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.Narrate
 import dev.spatial.service.SceneService
+import dev.spatial.sarf.SarfMapCompiler
+import dev.spatial.sarf.SarfMapScene
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.OffsetDateTime
@@ -26,7 +28,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 
 /**
- * Single McpToolset that registers the four Spatial tools with the IDE's
+ * Single McpToolset that registers the Spatial tools with the IDE's
  * bundled MCP Server (2026.1+). Each public annotated method becomes a tool;
  * its name is the method name, its description comes from @McpDescription.
  */
@@ -37,7 +39,9 @@ class SpatialToolset : McpToolset {
         "Replace (or merge into) the Spatial scene with a list of 3D entities. " +
             "Each entity: {id, kind (box|sphere|cylinder|cone|plane), position:{x,y,z}, " +
             "rotation:{x,y,z}, scale:{x,y,z}, color (#hex), label, opacity}. " +
-            "Use merge=true to upsert by id; default replaces everything."
+            "Use merge=true to upsert by id; default replaces everything. Prefer " +
+            "`spatial_push_sarf_map` for semantic architecture maps and `spatial_push_churn_landscape` " +
+            "or `spatial_push_repo_churn` for file-history landscapes."
     )
     suspend fun spatial_push_entities(
         @McpDescription("Entities to render in the scene.") entities: List<Entity>,
@@ -172,7 +176,8 @@ class SpatialToolset : McpToolset {
         "Render edges between entities — for SARF / architecture maps, dependency graphs, " +
             "service maps, etc. Each link references two entity ids. Links pointing at missing " +
             "entities are silently skipped, so push order doesn't matter. Set merge=true to keep " +
-            "existing links and upsert by id; default replaces the whole link set."
+            "existing links and upsert by id; default replaces the whole link set. Prefer " +
+            "`spatial_push_sarf_map` when you have semantic SaRF data and want the plugin to own layout."
     )
     suspend fun spatial_push_links(
         @McpDescription("Edges to render. Each: {id, fromId, toId, color?, label?, arrow?, opacity?}.")
@@ -184,6 +189,50 @@ class SpatialToolset : McpToolset {
         val service = project.service<SceneService>()
         service.pushLinks(links, merge = merge)
         return LinkResult(count = service.links.size)
+    }
+
+    @McpTool(name = "spatial_push_sarf_map")
+    @McpDescription(
+        "Render a canonical SaRF map scene from semantic project structure instead of raw coordinates. " +
+            "Provide ordered levels, clusters, modules, dependencies, and optional tour stops; the plugin " +
+            "computes a default layout with level lanes, cluster containers, module nodes, hierarchy links, " +
+            "dependency links, and a default focus target."
+    )
+    suspend fun spatial_push_sarf_map(
+        @McpDescription(
+            "Canonical SaRF scene contract. Levels establish order; clusters define the hierarchy and " +
+                "level placement; modules attach to clusters; dependencies may target either clusters or " +
+                "modules; tourStops add optional guide metadata; styles override layout defaults such as " +
+                "level gaps, cluster spacing, and opacity."
+        )
+        scene: SarfMapScene,
+        @McpDescription("Focus the camera on the first tour stop target or first root cluster. Default true.")
+        focus: Boolean = true,
+        @McpDescription("Clear any active churn landscape before rendering the SaRF map. Default true.")
+        clearLandscape: Boolean = true,
+        @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
+        reveal: Boolean = true,
+    ): SarfMapResult {
+        val project = currentCoroutineContext().project
+        val service = project.service<SceneService>()
+        val materialized = SarfMapCompiler.compile(scene)
+
+        if (clearLandscape) service.clearLandscape()
+        service.pushEntities(materialized.entities)
+        service.pushLinks(materialized.links)
+        if (focus) {
+            materialized.defaultFocusEntityId?.let { service.focusEntity(FocusEntity(it, distance = 8f, durationMs = 750)) }
+        }
+        if (reveal) revealToolWindow()
+
+        return SarfMapResult(
+            levels = scene.levels.ifEmpty { scene.clusters.map { it.levelId }.distinct().map { dev.spatial.sarf.SarfLevel(it) } }.size,
+            clusters = scene.clusters.size,
+            modules = scene.modules.size,
+            links = materialized.links.size,
+            focusEntityId = materialized.defaultFocusEntityId,
+            tourStops = scene.tourStops.size,
+        )
     }
 
     @McpTool(name = "spatial_clear_links")
@@ -262,6 +311,16 @@ class SpatialToolset : McpToolset {
         val files: Int,
         val firstFrameLabel: String? = null,
         val lastFrameLabel: String? = null,
+    )
+
+    @Serializable
+    data class SarfMapResult(
+        val levels: Int,
+        val clusters: Int,
+        val modules: Int,
+        val links: Int,
+        val focusEntityId: String? = null,
+        val tourStops: Int,
     )
 
     private suspend fun revealToolWindow() {

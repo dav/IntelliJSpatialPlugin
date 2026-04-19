@@ -1,0 +1,49 @@
+{
+  "title": "Commerce Platform",
+  "description": "Canonical SaRF map example with level lanes, feature families, modules, dependencies, and tour stops.",
+  "levels": [
+    { "id": "experience", "label": "Experience", "color": "#4f8fba" },
+    { "id": "domain", "label": "Domain", "color": "#d97b66" },
+    { "id": "infrastructure", "label": "Infrastructure", "color": "#6e9f6d" }
+  ],
+  "clusters": [
+    { "id": "catalog", "label": "Catalog", "levelId": "domain" },
+    { "id": "checkout", "label": "Checkout", "levelId": "domain" },
+    { "id": "catalog-ui", "label": "Catalog UI", "levelId": "experience", "parentId": "catalog" },
+    { "id": "checkout-ui", "label": "Checkout UI", "levelId": "experience", "parentId": "checkout" },
+    { "id": "catalog-storage", "label": "Catalog Storage", "levelId": "infrastructure", "parentId": "catalog" },
+    { "id": "payments-gateway", "label": "Payments Gateway", "levelId": "infrastructure", "parentId": "checkout" }
+  ],
+  "modules": [
+    { "id": "catalog-page", "label": "CatalogPage", "clusterId": "catalog-ui", "kind": "box" },
+    { "id": "search-panel", "label": "SearchPanel", "clusterId": "catalog-ui" },
+    { "id": "catalog-service", "label": "CatalogService", "clusterId": "catalog" },
+    { "id": "pricing-engine", "label": "PricingEngine", "clusterId": "catalog" },
+    { "id": "catalog-repo", "label": "CatalogRepository", "clusterId": "catalog-storage", "kind": "cylinder" },
+    { "id": "checkout-page", "label": "CheckoutPage", "clusterId": "checkout-ui", "kind": "box" },
+    { "id": "cart-service", "label": "CartService", "clusterId": "checkout" },
+    { "id": "payment-service", "label": "PaymentService", "clusterId": "checkout" },
+    { "id": "payments-client", "label": "PaymentsClient", "clusterId": "payments-gateway", "kind": "cone" }
+  ],
+  "dependencies": [
+    { "fromId": "catalog-page", "toId": "catalog-service", "label": "queries" },
+    { "fromId": "search-panel", "toId": "pricing-engine" },
+    { "fromId": "catalog-service", "toId": "catalog-repo" },
+    { "fromId": "checkout-page", "toId": "cart-service" },
+    { "fromId": "cart-service", "toId": "catalog-service", "label": "prices" },
+    { "fromId": "payment-service", "toId": "payments-client", "label": "charges", "weight": 2.0 }
+  ],
+  "tourStops": [
+    {
+      "entityId": "catalog",
+      "text": "Catalog is the central domain feature and connects the experience and storage lanes.",
+      "highlightIds": ["catalog", "catalog-ui", "catalog-storage"]
+    },
+    {
+      "entityId": "payment-service",
+      "text": "Payments cross the domain and infrastructure levels through a dedicated gateway adapter.",
+      "highlightIds": ["payment-service", "payments-client", "payments-gateway"],
+      "distance": 7.5
+    }
+  ]
+}

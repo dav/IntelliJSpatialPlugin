@@ -1,15 +1,16 @@
 # Spatial — 3D scene tool window for IntelliJ
 
 Spatial is an open-source IntelliJ Platform plugin that adds a 3D tool window
-to the IDE and exposes it to the built-in AI agent as an MCP skill. Agents
-push entity lists, the plugin renders them with Three.js inside a JCEF
-browser, and the user sees the project visualized alongside their code.
+to the IDE and exposes it to the built-in AI agent as an MCP skill. Agents can
+push raw geometry, semantic architecture maps, and churn landscapes; the plugin
+renders them with Three.js inside a JCEF browser so the user sees the project
+visualized alongside their code.
 
 <!-- Plugin description -->
 Spatial adds a 3D tool window to IntelliJ IDEA. The IDE's built-in AI agent
-can drive it over MCP — pushing entities, focusing the camera, and narrating
-what it shows — so project structure, call graphs, dependency trees, and
-other codebase artifacts become visual instead of textual.
+can drive it over MCP — pushing entities, SaRF maps, links, churn landscapes,
+camera moves, and narration — so project structure, call graphs, dependency
+trees, and other codebase artifacts become visual instead of textual.
 
 Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
 <!-- Plugin description end -->
@@ -35,19 +36,87 @@ Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
   a single `loadHTML` call (no scheme handler required), and subscribes to
   `SceneService` so state changes are pushed into the WebGL view via
   `executeJavaScript`.
-- The MCP tools are tiny — they translate calls from the IDE agent into
-  method calls on `SceneService`.
+- The MCP tools are intentionally small — they translate calls from the IDE
+  agent into method calls on `SceneService`, with a few domain-specific
+  helpers such as SaRF maps and repository churn.
 
 ## MCP tools
 
-| Tool                    | Purpose                                                       |
-| ----------------------- | ------------------------------------------------------------- |
-| `spatial_push_entities` | Replace or merge the scene with a list of entities.           |
-| `spatial_clear`         | Remove all entities.                                          |
-| `spatial_focus`         | Ease the camera toward a target position.                     |
-| `spatial_speak`         | Flash a one-line caption over the view.                       |
+| Tool                           | Purpose                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `spatial_push_entities`        | Replace or merge the scene with raw 3D entities.                        |
+| `spatial_clear`                | Remove all entities.                                                    |
+| `spatial_focus`                | Ease the camera toward a world-space target.                            |
+| `spatial_focus_entity`         | Ease the camera onto an entity already in the scene.                    |
+| `spatial_speak`                | Flash a one-line caption over the view.                                 |
+| `spatial_narrate`              | Speak a sentence aloud with optional on-screen caption.                 |
+| `spatial_highlight`            | Pulse one or more entities to draw attention.                           |
+| `spatial_push_links`           | Render edges between entity ids for dependency and architecture views.  |
+| `spatial_clear_links`          | Remove all links while leaving entities and landscapes intact.          |
+| `spatial_push_churn_landscape` | Render a treemap-like churn landscape from per-file timeline data.      |
+| `spatial_clear_landscape`      | Remove the active churn landscape.                                      |
+| `spatial_push_repo_churn`      | Analyze a git repo and push a churn landscape in one call.              |
+| `spatial_push_sarf_map`        | Render a canonical SaRF map from semantic structure instead of geometry. |
+
+## Canonical SaRF Contract
+
+For architecture maps, the preferred entry point is `spatial_push_sarf_map`.
+Agents should describe the project semantically and let the plugin compute a
+readable default layout.
+
+The canonical SaRF contract is defined in
+[`src/main/kotlin/dev/spatial/sarf/SarfMap.kt`](src/main/kotlin/dev/spatial/sarf/SarfMap.kt)
+and has these top-level fields:
+
+- `levels`: ordered lanes such as `experience`, `domain`, `infrastructure`
+- `clusters`: hierarchical feature or subsystem containers placed within levels
+- `modules`: concrete nodes that belong to clusters
+- `dependencies`: links between clusters and/or modules
+- `tourStops`: optional narration/highlight metadata for guided tours
+- `styles`: optional layout and appearance overrides
+
+The plugin materializes that contract into:
+
+- level lanes
+- cluster boxes
+- module nodes
+- hierarchy links
+- dependency links
+- a default focus target
+
+### Canonical Example
+
+A complete checked-in example lives at
+[`src/main/resources/examples/canonical-sarf-map.json`](src/main/resources/examples/canonical-sarf-map.json).
+
+Minimal example:
+
+```json
+{
+  "levels": [
+    { "id": "experience", "label": "Experience" },
+    { "id": "domain", "label": "Domain" },
+    { "id": "infrastructure", "label": "Infrastructure" }
+  ],
+  "clusters": [
+    { "id": "catalog", "label": "Catalog", "levelId": "domain" },
+    { "id": "catalog-ui", "label": "Catalog UI", "levelId": "experience", "parentId": "catalog" }
+  ],
+  "modules": [
+    { "id": "catalog-page", "label": "CatalogPage", "clusterId": "catalog-ui", "kind": "box" },
+    { "id": "catalog-service", "label": "CatalogService", "clusterId": "catalog" }
+  ],
+  "dependencies": [
+    { "fromId": "catalog-page", "toId": "catalog-service", "label": "queries" }
+  ]
+}
+```
 
 ### Entity schema
+
+Use `spatial_push_entities` when you need full manual control over geometry.
+For architecture maps, prefer `spatial_push_sarf_map`; for file-history views,
+prefer `spatial_push_churn_landscape` or `spatial_push_repo_churn`.
 
 ```json
 {
@@ -85,6 +154,8 @@ Requires JDK 21+ and a JetBrains Runtime that includes JCEF.
    ```json
    {"entities":[{"id":"a","kind":"sphere","position":{"x":0,"y":0,"z":0},"color":"#4a90e2"}]}
    ```
+4. For a semantic architecture map, prefer `spatial_push_sarf_map` with a
+   canonical SaRF payload instead of hand-placed entities.
 
 ## Starting from the template
 
