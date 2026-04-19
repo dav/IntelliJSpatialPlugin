@@ -36,6 +36,17 @@
         }
         #toolbar button:hover { background: rgba(60, 63, 70, 0.95); }
         #toolbar button:active { background: rgba(30, 31, 34, 0.95); }
+        #scrub {
+            position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%);
+            display: none; align-items: center; gap: 10px;
+            background: rgba(30, 31, 34, 0.88); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px; padding: 8px 14px; font-size: 12px; color: #cdd0d4;
+            min-width: 360px;
+        }
+        #scrub.visible { display: flex; }
+        #scrub-range { flex: 1; accent-color: #4a90e2; }
+        #scrub-label { min-width: 90px; text-align: right; opacity: 0.8; }
+        #scrub-tip { opacity: 0.6; }
     </style>
 </head>
 <body>
@@ -46,7 +57,12 @@
     </div>
     <div id="speech"></div>
     <div id="empty">Scene is empty. Ask the IDE AI agent to call a Spatial MCP tool.</div>
-    <div id="hud"><span id="hud-count">0</span> entities · drag to orbit · scroll to zoom</div>
+    <div id="hud"><span id="hud-count">0</span> entities · drag to orbit · right-drag to pan · scroll to zoom</div>
+    <div id="scrub">
+        <span id="scrub-tip">◂ scrub time</span>
+        <input id="scrub-range" type="range" min="0" max="0" step="1" value="0">
+        <span id="scrub-label">—</span>
+    </div>
 
     <script>
       // Bridge back to Kotlin. Populated by the plugin so scene.js can send events.

@@ -40,6 +40,17 @@
   scene.add(entityRoot);
   const byId = new Map();
 
+  const landscapeRoot = new THREE.Group();
+  scene.add(landscapeRoot);
+  // Per-cell state for the active landscape, keyed by file path.
+  const landscapeCells = new Map(); // path → { mesh, baseColor, heights:[], colors:[], currentHeight }
+  let landscapeTimeline = null;
+  let landscapeFrameIndex = 0;
+  let landscapeMaxHeight = 6;
+  const scrubEl = document.getElementById('scrub');
+  const scrubRange = document.getElementById('scrub-range');
+  const scrubLabel = document.getElementById('scrub-label');
+
   function resize() {
     const w = stage.clientWidth || window.innerWidth;
     const h = stage.clientHeight || window.innerHeight;
@@ -249,8 +260,13 @@
         byId.delete(id);
       }
     }
-    hudCount.textContent = String(byId.size);
-    emptyState.classList.toggle('hidden', byId.size > 0);
+    refreshHud();
+  }
+
+  function refreshHud() {
+    const total = byId.size + landscapeCells.size;
+    hudCount.textContent = String(total);
+    emptyState.classList.toggle('hidden', total > 0);
   }
 
   function easeCamera(endTarget, endRadius, endTheta, endPhi, duration) {
@@ -286,11 +302,13 @@
   }
 
   function fit() {
-    if (byId.size === 0) {
+    if (byId.size === 0 && landscapeCells.size === 0) {
       recenter();
       return;
     }
-    const box = new THREE.Box3().setFromObject(entityRoot);
+    const box = new THREE.Box3();
+    if (byId.size) box.union(new THREE.Box3().setFromObject(entityRoot));
+    if (landscapeCells.size) box.union(new THREE.Box3().setFromObject(landscapeRoot));
     if (box.isEmpty()) { recenter(); return; }
     const sphere = new THREE.Sphere();
     box.getBoundingSphere(sphere);
@@ -379,5 +397,232 @@
     });
   }
 
-  window.Spatial = { setScene, focus, focusEntity, speak, narrate, highlight, recenter, fit };
+  // ---------- Churn landscape (treemap on the floor, scrubbable across time) ----------
+
+  // Squarified treemap (Bruls/Huijsen/van Wijk 2000). Returns {path → {x,y,w,h}}
+  // in the rectangle [0..W] × [0..H].
+  function squarifyTreemap(items, W, H) {
+    const out = {};
+    if (!items.length) return out;
+    const total = items.reduce((s, it) => s + Math.max(it.size, 1e-6), 0);
+    const scale = (W * H) / total;
+    const sized = items.map((it) => ({ key: it.key, area: Math.max(it.size, 1e-6) * scale }));
+    sized.sort((a, b) => b.area - a.area);
+
+    let x = 0, y = 0, w = W, h = H;
+    let row = [];
+
+    function worst(row, side) {
+      if (!row.length) return Infinity;
+      const s = row.reduce((a, b) => a + b.area, 0);
+      const r = row.reduce((a, b) => Math.max(a, b.area), 0);
+      const min = row.reduce((a, b) => Math.min(a, b.area), Infinity);
+      return Math.max((side * side * r) / (s * s), (s * s) / (side * side * min));
+    }
+
+    function layoutRow(row) {
+      const side = Math.min(w, h);
+      const sum = row.reduce((a, b) => a + b.area, 0);
+      const thickness = sum / side;
+      let cursor = 0;
+      if (w >= h) {
+        // Strip on the left, full height
+        row.forEach((it) => {
+          const segH = it.area / thickness;
+          out[it.key] = { x: x, y: y + cursor, w: thickness, h: segH };
+          cursor += segH;
+        });
+        x += thickness; w -= thickness;
+      } else {
+        row.forEach((it) => {
+          const segW = it.area / thickness;
+          out[it.key] = { x: x + cursor, y: y, w: segW, h: thickness };
+          cursor += segW;
+        });
+        y += thickness; h -= thickness;
+      }
+    }
+
+    sized.forEach((it) => {
+      const side = Math.min(w, h);
+      const candidate = [...row, it];
+      if (worst(candidate, side) <= worst(row, side) || row.length === 0) {
+        row.push(it);
+      } else {
+        layoutRow(row);
+        row = [it];
+      }
+    });
+    if (row.length) layoutRow(row);
+    return out;
+  }
+
+  function disposeLandscape() {
+    landscapeCells.forEach(({ mesh, labelSprite }) => {
+      landscapeRoot.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+      if (labelSprite) {
+        landscapeRoot.remove(labelSprite);
+        labelSprite.material.map.dispose();
+        labelSprite.material.dispose();
+      }
+    });
+    landscapeCells.clear();
+  }
+
+  function defaultChurnColor(t) {
+    // Cool→warm: blue → cyan → green → yellow → red.
+    const c = new THREE.Color();
+    c.setHSL(0.66 - 0.66 * Math.max(0, Math.min(1, t)), 0.7, 0.5);
+    return c;
+  }
+
+  function setLandscape(timeline) {
+    if (!timeline || !Array.isArray(timeline.frames) || timeline.frames.length === 0) {
+      clearLandscape();
+      return;
+    }
+    landscapeTimeline = timeline;
+    landscapeFrameIndex = 0;
+    landscapeMaxHeight = timeline.maxHeight || 6;
+    const floor = timeline.floorSize || 20;
+
+    // Union of paths across all frames; each path's cell footprint uses the max LOC across frames
+    // (so cells don't change footprint as you scrub — only height changes).
+    const pathInfo = new Map();
+    timeline.frames.forEach((frame) => {
+      (frame.entries || []).forEach((e) => {
+        if (!e || !e.path) return;
+        const prev = pathInfo.get(e.path) || { loc: 0 };
+        if ((e.loc || 0) > prev.loc) prev.loc = e.loc || 0;
+        pathInfo.set(e.path, prev);
+      });
+    });
+
+    const items = Array.from(pathInfo, ([key, info]) => ({ key, size: info.loc || 1 }));
+    const layout = squarifyTreemap(items, floor, floor);
+
+    // Per-frame max churn for the default color ramp.
+    const frameMax = timeline.frames.map((f) =>
+      (f.entries || []).reduce((m, e) => Math.max(m, e.churn || 0), 0) || 1,
+    );
+
+    disposeLandscape();
+    pathInfo.forEach((_info, path) => {
+      const rect = layout[path];
+      if (!rect) return;
+      const padding = Math.min(rect.w, rect.h) * 0.06;
+      const w = Math.max(0.05, rect.w - padding);
+      const d = Math.max(0.05, rect.h - padding);
+      const geom = new THREE.BoxGeometry(w, 1, d); // unit-tall; we scale Y to set actual height
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x666666, metalness: 0.05, roughness: 0.9,
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      mesh.position.x = rect.x + rect.w / 2 - floor / 2;
+      mesh.position.z = rect.y + rect.h / 2 - floor / 2;
+      mesh.position.y = 0;
+      mesh.scale.y = 0.001;
+
+      // Per-frame heights and colors so scrubbing is local.
+      const heights = timeline.frames.map((f) => {
+        const entry = (f.entries || []).find((e) => e.path === path);
+        if (!entry) return 0;
+        const max = frameMax[timeline.frames.indexOf(f)] || 1;
+        return Math.max(0.001, (entry.churn || 0) / max) * landscapeMaxHeight;
+      });
+      const colors = timeline.frames.map((f) => {
+        const entry = (f.entries || []).find((e) => e.path === path);
+        if (entry && entry.color) return new THREE.Color(entry.color);
+        const max = frameMax[timeline.frames.indexOf(f)] || 1;
+        return defaultChurnColor((entry?.churn || 0) / max);
+      });
+
+      mesh.userData.spatialPath = path;
+      mesh.userData.kind = 'landscape-cell';
+      landscapeRoot.add(mesh);
+
+      // Label sits above the cell in world space (not parented to the scaled mesh,
+      // so the unit Y-scale doesn't distort it).
+      const fileLabel = path.split('/').pop();
+      const labelSprite = makeLabelSprite(fileLabel);
+      labelSprite.position.set(mesh.position.x, 0, mesh.position.z);
+      labelSprite.scale.set(1.4, 0.35, 1);
+      labelSprite.visible = false;
+      landscapeRoot.add(labelSprite);
+
+      landscapeCells.set(path, {
+        mesh,
+        labelSprite,
+        heights,
+        colors,
+        currentHeight: 0,
+      });
+    });
+
+    // Slider visibility / range
+    if (timeline.frames.length > 1) {
+      scrubRange.min = '0';
+      scrubRange.max = String(timeline.frames.length - 1);
+      scrubRange.value = '0';
+      scrubEl.classList.add('visible');
+    } else {
+      scrubEl.classList.remove('visible');
+    }
+    scrubLabel.textContent = timeline.frames[0].label || '—';
+
+    applyLandscapeFrame(0, true);
+    refreshHud();
+    fit();
+  }
+
+  function applyLandscapeFrame(idx, jumpInsteadOfEase) {
+    if (!landscapeTimeline) return;
+    landscapeFrameIndex = idx;
+    scrubLabel.textContent = landscapeTimeline.frames[idx]?.label || '—';
+    const startTime = performance.now();
+    const dur = jumpInsteadOfEase ? 0 : 350;
+
+    landscapeCells.forEach((cell) => {
+      cell._startHeight = cell.currentHeight;
+      cell._endHeight = cell.heights[idx] || 0;
+      cell._startColor = cell.mesh.material.color.clone();
+      cell._endColor = cell.colors[idx] || cell.mesh.material.color.clone();
+    });
+
+    function step(now) {
+      const t = dur === 0 ? 1 : Math.min(1, (now - startTime) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      landscapeCells.forEach((cell) => {
+        const h = cell._startHeight + (cell._endHeight - cell._startHeight) * eased;
+        cell.currentHeight = h;
+        cell.mesh.scale.y = Math.max(0.001, h);
+        cell.mesh.position.y = h / 2;
+        cell.mesh.material.color.lerpColors(cell._startColor, cell._endColor, eased);
+        if (cell.labelSprite) {
+          cell.labelSprite.position.y = h + 0.35;
+          cell.labelSprite.visible = h > landscapeMaxHeight * 0.35;
+        }
+      });
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function clearLandscape() {
+    landscapeTimeline = null;
+    disposeLandscape();
+    scrubEl.classList.remove('visible');
+    refreshHud();
+  }
+
+  scrubRange.addEventListener('input', (e) => {
+    applyLandscapeFrame(parseInt(e.target.value, 10), false);
+  });
+
+  window.Spatial = {
+    setScene, focus, focusEntity, speak, narrate, highlight, recenter, fit,
+    setLandscape, clearLandscape,
+  };
 })();

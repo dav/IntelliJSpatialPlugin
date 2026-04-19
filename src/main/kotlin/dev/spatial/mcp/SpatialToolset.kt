@@ -7,12 +7,18 @@ import com.intellij.mcpserver.project
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
 import com.intellij.openapi.wm.ToolWindowManager
+import dev.spatial.git.GitChurnAnalyzer
 import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Narrate
 import dev.spatial.service.SceneService
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
@@ -131,6 +137,104 @@ class SpatialToolset : McpToolset {
         project.service<SceneService>().highlight(Highlight(entityIds, durationMs, color))
         return SimpleResult(ok = true)
     }
+
+    @McpTool(name = "spatial_push_churn_landscape")
+    @McpDescription(
+        "Render a churn landscape: the project as a 3D treemap on the floor, each cell extruded by " +
+            "its activity. Pass multiple frames to enable a time-scrub slider in the tool window. The " +
+            "plugin computes the squarified treemap layout — agents only supply per-file numbers.\n" +
+            "Each entry is one file in one frame: {path, loc (cell footprint size), churn (extrusion " +
+            "height), color?, author?}. A path that appears in some frames but not others collapses to " +
+            "height 0 in the missing frames."
+    )
+    suspend fun spatial_push_churn_landscape(
+        @McpDescription("Ordered frames; the slider scrubs between them. Single-frame is fine — slider hides.")
+        frames: List<dev.spatial.scene.LandscapeFrame>,
+        @McpDescription("Side length of the floor square. Default 20.") floorSize: Float = 20f,
+        @McpDescription("Maximum extrusion height for the busiest cell. Default 6.") maxHeight: Float = 6f,
+    ): SimpleResult {
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().pushLandscape(LandscapeTimeline(frames, floorSize, maxHeight))
+        return SimpleResult(ok = true)
+    }
+
+    @McpTool(name = "spatial_clear_landscape")
+    @McpDescription("Remove the churn landscape (regular entities are unaffected).")
+    suspend fun spatial_clear_landscape(): SimpleResult {
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().clearLandscape()
+        return SimpleResult(ok = true)
+    }
+
+    @McpTool(name = "spatial_push_repo_churn")
+    @McpDescription(
+        "Analyze a git repository's history and push a churn landscape to the Spatial view in one " +
+            "call. Splits the chosen time range into N equal buckets, runs `git log --numstat` per " +
+            "bucket, and renders each file as a treemap cell extruded by its activity. Use this " +
+            "instead of spatial_push_churn_landscape when you don't want to compute the per-file " +
+            "numbers yourself.\n" +
+            "If repoPath is omitted, uses the current IDE project's root. Requires `git` on PATH."
+    )
+    suspend fun spatial_push_repo_churn(
+        @McpDescription("Absolute path to the git repo. Empty/null = current IDE project root.")
+        repoPath: String? = null,
+        @McpDescription("Number of equal-width time buckets across the range. Default 6.")
+        frames: Int = 6,
+        @McpDescription("Keep the top K files by total churn across all frames. Default 40.")
+        topK: Int = 40,
+        @McpDescription("ISO date for timeline start (e.g. 2025-01-01 or 2025-01-01T00:00:00Z). " +
+            "Default = first commit.")
+        since: String? = null,
+        @McpDescription("ISO date for timeline end. Default = HEAD.")
+        until: String? = null,
+        @McpDescription("Side length of the floor square. Default 22.")
+        floorSize: Float = 22f,
+        @McpDescription("Maximum extrusion height for the busiest cell. Default 7.")
+        maxHeight: Float = 7f,
+    ): RepoChurnResult {
+        val project = currentCoroutineContext().project
+        val resolvedRoot: Path = repoPath?.takeIf { it.isNotBlank() }?.let(Paths::get)
+            ?: project.basePath?.let(Paths::get)
+            ?: error("No repoPath given and the project has no base path.")
+        if (!resolvedRoot.toFile().isDirectory) {
+            error("Not a directory: $resolvedRoot")
+        }
+        val analyzer = GitChurnAnalyzer(resolvedRoot)
+        val timeline = analyzer.analyze(
+            frames = frames,
+            since = parseIsoOrNull(since),
+            until = parseIsoOrNull(until),
+            topK = topK,
+            floorSize = floorSize,
+            maxHeight = maxHeight,
+        )
+        project.service<SceneService>().pushLandscape(timeline)
+        revealToolWindow()
+        return RepoChurnResult(
+            repoPath = resolvedRoot.toString(),
+            frames = timeline.frames.size,
+            files = timeline.frames.firstOrNull()?.entries?.size ?: 0,
+            firstFrameLabel = timeline.frames.firstOrNull()?.label,
+            lastFrameLabel = timeline.frames.lastOrNull()?.label,
+        )
+    }
+
+    private fun parseIsoOrNull(s: String?): OffsetDateTime? {
+        val v = s?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return runCatching { OffsetDateTime.parse(v) }
+            .recoverCatching { java.time.LocalDate.parse(v).atStartOfDay().atOffset(ZoneOffset.UTC) }
+            .recoverCatching { java.time.LocalDateTime.parse(v).atOffset(ZoneOffset.UTC) }
+            .getOrElse { error("Cannot parse date '$v' (try yyyy-MM-dd or full ISO 8601).") }
+    }
+
+    @Serializable
+    data class RepoChurnResult(
+        val repoPath: String,
+        val frames: Int,
+        val files: Int,
+        val firstFrameLabel: String? = null,
+        val lastFrameLabel: String? = null,
+    )
 
     private suspend fun revealToolWindow() {
         val project = currentCoroutineContext().project

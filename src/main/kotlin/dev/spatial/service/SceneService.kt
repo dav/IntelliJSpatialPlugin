@@ -6,6 +6,7 @@ import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import kotlinx.serialization.encodeToString
@@ -27,6 +28,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         fun onSpeech(message: String) {}
         fun onNarrate(req: Narrate) {}
         fun onHighlight(req: Highlight) {}
+        fun onLandscape(timeline: LandscapeTimeline?) {}
     }
 
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -35,9 +37,14 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
     var scene: Scene = Scene(emptyList())
         private set
 
+    @Volatile
+    var landscape: LandscapeTimeline? = null
+        private set
+
     fun addListener(listener: Listener) {
         listeners += listener
         listener.onSceneChanged(scene)
+        landscape?.let(listener::onLandscape)
     }
 
     fun removeListener(listener: Listener) {
@@ -78,6 +85,16 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
 
     fun highlight(req: Highlight) {
         listeners.forEach { it.onHighlight(req) }
+    }
+
+    fun pushLandscape(timeline: LandscapeTimeline) {
+        landscape = timeline
+        listeners.forEach { it.onLandscape(timeline) }
+    }
+
+    fun clearLandscape() {
+        landscape = null
+        listeners.forEach { it.onLandscape(null) }
     }
 
     companion object {

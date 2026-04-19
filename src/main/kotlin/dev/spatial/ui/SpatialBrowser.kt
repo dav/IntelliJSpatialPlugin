@@ -12,6 +12,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import dev.spatial.service.SceneService
@@ -99,6 +100,14 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
 
     override fun onHighlight(req: Highlight) {
         runInBrowser("window.Spatial.highlight(${SceneService.encode(req)})")
+    }
+
+    override fun onLandscape(timeline: LandscapeTimeline?) {
+        if (timeline == null) {
+            runInBrowser("window.Spatial.clearLandscape()")
+        } else {
+            runInBrowser("window.Spatial.setLandscape(${SceneService.encode(timeline)})")
+        }
     }
 
     override fun dispose() {

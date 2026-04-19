@@ -60,3 +60,34 @@ data class Narrate(
     val rate: Float = 1f,
     val caption: Boolean = true,
 )
+
+/**
+ * One leaf cell of a churn-landscape treemap at a given moment in time.
+ *
+ * `path` is the cell's stable identity across frames — same path in two frames
+ * means the same cell, animated between heights. `loc` (lines of code, or any
+ * "size" measure) drives the cell's footprint in the treemap. `churn` (or any
+ * "intensity" measure) drives its extrusion height. `color` is optional —
+ * absent means the renderer picks one from a churn-based palette.
+ */
+@Serializable
+data class LandscapeEntry(
+    val path: String,
+    val loc: Float,
+    val churn: Float,
+    val color: String? = null,
+    val author: String? = null,
+)
+
+@Serializable
+data class LandscapeFrame(
+    val label: String,
+    val entries: List<LandscapeEntry>,
+)
+
+@Serializable
+data class LandscapeTimeline(
+    val frames: List<LandscapeFrame>,
+    val floorSize: Float = 20f,
+    val maxHeight: Float = 6f,
+)
