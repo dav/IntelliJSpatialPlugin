@@ -15,6 +15,9 @@ trees, and other codebase artifacts become visual instead of textual.
 Ships Three.js bundled offline. Requires a JetBrains IDE with JCEF.
 <!-- Plugin description end -->
 
+<img width="1503" height="926" alt="Screenshot 2026-04-19 at 12 23 19 AM" src="https://github.com/user-attachments/assets/cc4756e2-f425-4765-a074-e96231a84b34" />
+
+
 ## Architecture
 
 ```
