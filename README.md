@@ -51,6 +51,7 @@ Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
 | `spatial_speak`                | Flash a one-line caption over the view.                                 |
 | `spatial_narrate`              | Speak a sentence aloud with optional on-screen caption.                 |
 | `spatial_highlight`            | Pulse one or more entities to draw attention.                           |
+| `spatial_play_tour`            | Play a synchronized multi-stop tour with speech, focus, and highlight.  |
 | `spatial_push_links`           | Render edges between entity ids for dependency and architecture views.  |
 | `spatial_clear_links`          | Remove all links while leaving entities and landscapes intact.          |
 | `spatial_push_churn_landscape` | Render a treemap-like churn landscape from per-file timeline data.      |
@@ -72,7 +73,7 @@ and has these top-level fields:
 - `clusters`: hierarchical feature or subsystem containers placed within levels
 - `modules`: concrete nodes that belong to clusters
 - `dependencies`: links between clusters and/or modules
-- `tourStops`: optional narration/highlight metadata for guided tours
+- `tourStops`: optional guided-tour stops with narration and timing metadata
 - `styles`: optional layout and appearance overrides
 
 The plugin materializes that contract into:
@@ -83,6 +84,23 @@ The plugin materializes that contract into:
 - hierarchy links
 - dependency links
 - a default focus target
+
+If you want narrated playback, either:
+
+- call `spatial_push_sarf_map` with `playTour: true`, or
+- call `spatial_play_tour` with explicit stops after the scene is present
+
+Each `tourStop` may include:
+
+- `focusDurationMs`
+- `highlightDurationMs`
+- `preDelayMs`
+- `postDelayMs`
+- `minHoldMs`
+- `voice`
+- `rate`
+- `caption`
+- `waitForSpeech`
 
 ### Canonical Example
 

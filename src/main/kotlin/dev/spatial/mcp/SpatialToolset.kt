@@ -15,6 +15,8 @@ import dev.spatial.scene.Highlight
 import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.Narrate
+import dev.spatial.scene.TourRequest
+import dev.spatial.scene.TourStop
 import dev.spatial.service.SceneService
 import dev.spatial.sarf.SarfMapCompiler
 import dev.spatial.sarf.SarfMapScene
@@ -203,13 +205,19 @@ class SpatialToolset : McpToolset {
             "Canonical SaRF scene contract. Levels establish order; clusters define the hierarchy and " +
                 "level placement; modules attach to clusters; dependencies may target either clusters or " +
                 "modules; tourStops add optional guide metadata; styles override layout defaults such as " +
-                "level gaps, cluster spacing, and opacity."
+                "level gaps, cluster spacing, and opacity. Tour stops may also carry focus/highlight " +
+                "durations, pre/post delays, voice, rate, and waitForSpeech."
         )
         scene: SarfMapScene,
         @McpDescription("Focus the camera on the first tour stop target or first root cluster. Default true.")
         focus: Boolean = true,
         @McpDescription("Clear any active churn landscape before rendering the SaRF map. Default true.")
         clearLandscape: Boolean = true,
+        @McpDescription(
+            "Play the scene's tourStops through the synchronized browser-side tour runner after rendering. " +
+                "Default false."
+        )
+        playTour: Boolean = false,
         @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
         reveal: Boolean = true,
     ): SarfMapResult {
@@ -220,7 +228,10 @@ class SpatialToolset : McpToolset {
         if (clearLandscape) service.clearLandscape()
         service.pushEntities(materialized.entities)
         service.pushLinks(materialized.links)
-        if (focus) {
+        val tourStarted = playTour && materialized.tourStops.isNotEmpty()
+        if (tourStarted) {
+            service.playTour(TourRequest(materialized.tourStops))
+        } else if (focus) {
             materialized.defaultFocusEntityId?.let { service.focusEntity(FocusEntity(it, distance = 8f, durationMs = 750)) }
         }
         if (reveal) revealToolWindow()
@@ -232,7 +243,34 @@ class SpatialToolset : McpToolset {
             links = materialized.links.size,
             focusEntityId = materialized.defaultFocusEntityId,
             tourStops = scene.tourStops.size,
+            tourStarted = tourStarted,
         )
+    }
+
+    @McpTool(name = "spatial_play_tour")
+    @McpDescription(
+        "Play a synchronized scene tour in the browser so focus, highlight, caption, and speech stay " +
+            "in lockstep. Use this instead of issuing separate narrate/focus/highlight calls when the " +
+            "timing matters across multiple stops."
+    )
+    suspend fun spatial_play_tour(
+        @McpDescription(
+            "Ordered tour stops. Each stop targets an existing entity id and may include narration text, " +
+                "highlight ids, camera distance, focus/highlight durations, pre/post delays, caption, " +
+                "voice, rate, and waitForSpeech."
+        )
+        stops: List<TourStop>,
+        @McpDescription("Zero-based stop index to start from. Default 0.")
+        startIndex: Int = 0,
+        @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
+        reveal: Boolean = true,
+    ): TourResult {
+        require(stops.isNotEmpty()) { "Tour must contain at least one stop." }
+        require(startIndex in stops.indices) { "startIndex $startIndex is out of bounds for ${stops.size} stops." }
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().playTour(TourRequest(stops = stops, startIndex = startIndex))
+        if (reveal) revealToolWindow()
+        return TourResult(stops = stops.size, startIndex = startIndex)
     }
 
     @McpTool(name = "spatial_clear_links")
@@ -321,6 +359,13 @@ class SpatialToolset : McpToolset {
         val links: Int,
         val focusEntityId: String? = null,
         val tourStops: Int,
+        val tourStarted: Boolean = false,
+    )
+
+    @Serializable
+    data class TourResult(
+        val stops: Int,
+        val startIndex: Int = 0,
     )
 
     private suspend fun revealToolWindow() {

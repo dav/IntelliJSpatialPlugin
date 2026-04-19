@@ -17,6 +17,7 @@ import dev.spatial.scene.Link
 import dev.spatial.scene.LinkSet
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
+import dev.spatial.scene.TourRequest
 import dev.spatial.service.SceneService
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -102,6 +103,10 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
 
     override fun onHighlight(req: Highlight) {
         runInBrowser("window.Spatial.highlight(${SceneService.encode(req)})")
+    }
+
+    override fun onPlayTour(req: TourRequest) {
+        runInBrowser("window.Spatial.playTour(${SceneService.encode(req)})")
     }
 
     override fun onLandscape(timeline: LandscapeTimeline?) {

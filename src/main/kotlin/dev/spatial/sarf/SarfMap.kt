@@ -2,6 +2,7 @@ package dev.spatial.sarf
 
 import dev.spatial.scene.Entity
 import dev.spatial.scene.Link
+import dev.spatial.scene.TourStop
 import dev.spatial.scene.Vec3
 import kotlin.math.ceil
 import kotlin.math.max
@@ -26,7 +27,7 @@ data class SarfMapScene(
     val clusters: List<SarfCluster>,
     val modules: List<SarfModule> = emptyList(),
     val dependencies: List<SarfDependency> = emptyList(),
-    val tourStops: List<SarfTourStop> = emptyList(),
+    val tourStops: List<TourStop> = emptyList(),
     val styles: SarfStyles = SarfStyles(),
 )
 
@@ -69,14 +70,6 @@ data class SarfDependency(
 )
 
 @Serializable
-data class SarfTourStop(
-    val entityId: String,
-    val text: String,
-    val highlightIds: List<String> = emptyList(),
-    val distance: Float? = null,
-)
-
-@Serializable
 data class SarfStyles(
     val levelGap: Float = 10f,
     val familyGap: Float = 4f,
@@ -111,7 +104,7 @@ data class MaterializedSarfMap(
     val entities: List<Entity>,
     val links: List<Link>,
     val defaultFocusEntityId: String?,
-    val tourStops: List<SarfTourStop>,
+    val tourStops: List<TourStop>,
 )
 
 object SarfMapCompiler {

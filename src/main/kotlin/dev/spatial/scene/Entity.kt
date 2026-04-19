@@ -80,6 +80,30 @@ data class Narrate(
     val caption: Boolean = true,
 )
 
+@Serializable
+data class TourStop(
+    val entityId: String,
+    val text: String? = null,
+    val highlightIds: List<String> = emptyList(),
+    val distance: Float? = null,
+    val focusDurationMs: Int = 600,
+    val highlightDurationMs: Int? = null,
+    val preDelayMs: Int = 0,
+    val postDelayMs: Int = 250,
+    val minHoldMs: Int = 0,
+    val voice: String? = null,
+    val rate: Float? = null,
+    val caption: Boolean = true,
+    val color: String = "#ffffff",
+    val waitForSpeech: Boolean = true,
+)
+
+@Serializable
+data class TourRequest(
+    val stops: List<TourStop>,
+    val startIndex: Int = 0,
+)
+
 /**
  * One leaf cell of a churn-landscape treemap at a given moment in time.
  *

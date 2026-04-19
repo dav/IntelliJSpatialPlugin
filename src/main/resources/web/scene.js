@@ -276,6 +276,7 @@
   }
 
   function easeCamera(endTarget, endRadius, endTheta, endPhi, duration) {
+    const myToken = ++cameraAnimationToken;
     const startTarget = target.clone();
     const startRadius = spherical.radius;
     const startTheta = spherical.theta;
@@ -283,17 +284,27 @@
     const dur = Math.max(0, duration);
     const startTime = performance.now();
 
-    function step(now) {
-      const progress = dur === 0 ? 1 : Math.min(1, (now - startTime) / dur);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      target.lerpVectors(startTarget, endTarget, eased);
-      spherical.radius = startRadius + (endRadius - startRadius) * eased;
-      if (endTheta != null) spherical.theta = startTheta + (endTheta - startTheta) * eased;
-      if (endPhi != null) spherical.phi = startPhi + (endPhi - startPhi) * eased;
-      updateCamera();
-      if (progress < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
+    return new Promise((resolve) => {
+      function step(now) {
+        if (myToken !== cameraAnimationToken) {
+          resolve(false);
+          return;
+        }
+        const progress = dur === 0 ? 1 : Math.min(1, (now - startTime) / dur);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        target.lerpVectors(startTarget, endTarget, eased);
+        spherical.radius = startRadius + (endRadius - startRadius) * eased;
+        if (endTheta != null) spherical.theta = startTheta + (endTheta - startTheta) * eased;
+        if (endPhi != null) spherical.phi = startPhi + (endPhi - startPhi) * eased;
+        updateCamera();
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          resolve(true);
+        }
+      }
+      requestAnimationFrame(step);
+    });
   }
 
   function focus(payload) {
@@ -330,39 +341,150 @@
   document.getElementById('btn-fit').addEventListener('click', fit);
 
   let speechTimer = null;
-  function speak(text) {
+  function showCaption(text) {
     speech.textContent = text || '';
     speech.classList.add('visible');
+  }
+
+  function hideCaption() {
+    speech.classList.remove('visible');
+  }
+
+  function scheduleHideCaption(delayMs) {
     if (speechTimer) clearTimeout(speechTimer);
-    speechTimer = setTimeout(() => speech.classList.remove('visible'), 4000);
+    speechTimer = setTimeout(hideCaption, delayMs);
+  }
+
+  function speak(text, durationMs) {
+    showCaption(text);
+    scheduleHideCaption(durationMs != null ? durationMs : 4000);
   }
 
   // Lazy-load voices — Web Speech API fills the list asynchronously.
-  let cachedVoices = speechSynthesis.getVoices();
-  speechSynthesis.onvoiceschanged = () => { cachedVoices = speechSynthesis.getVoices(); };
+  const hasSpeechSynthesis = 'speechSynthesis' in window;
+  let cachedVoices = hasSpeechSynthesis ? speechSynthesis.getVoices() : [];
+  if (hasSpeechSynthesis) {
+    speechSynthesis.onvoiceschanged = () => { cachedVoices = speechSynthesis.getVoices(); };
+  }
 
-  function narrate(payload) {
-    if (!payload || !payload.text) return;
-    if (payload.caption !== false) speak(payload.text);
-    if (!('speechSynthesis' in window)) return;
+  function estimateSpeechMs(text, rate) {
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+    const normalizedRate = Math.max(0.5, Math.min(2, rate || 1));
+    return Math.max(1200, Math.round((Math.max(words, 1) * 360) / normalizedRate + 500));
+  }
+
+  function cancelNarration() {
+    if (hasSpeechSynthesis) speechSynthesis.cancel();
+    if (speechTimer) clearTimeout(speechTimer);
+    hideCaption();
+  }
+
+  function narrateInternal(payload, options) {
+    if (!payload || !payload.text) return Promise.resolve({ durationMs: 0, spoken: false });
+    const interrupt = !options || options.interrupt !== false;
+    const rate = payload.rate || 1;
+    const estimatedDuration = estimateSpeechMs(payload.text, rate);
+    if (payload.caption !== false) showCaption(payload.text);
+    if (!hasSpeechSynthesis) {
+      if (payload.caption !== false) scheduleHideCaption(estimatedDuration);
+      return new Promise((resolve) => {
+        setTimeout(() => resolve({ durationMs: estimatedDuration, spoken: false }), estimatedDuration);
+      });
+    }
     const utter = new SpeechSynthesisUtterance(payload.text);
-    utter.rate = payload.rate || 1;
+    utter.rate = rate;
     if (payload.voice) {
       const match = cachedVoices.find((v) => v.name === payload.voice)
         || cachedVoices.find((v) => v.name.toLowerCase().includes(String(payload.voice).toLowerCase()));
       if (match) utter.voice = match;
     }
-    // Let each new narrate line take over — tour stops shouldn't stack.
-    speechSynthesis.cancel();
-    speechSynthesis.speak(utter);
+    if (interrupt) speechSynthesis.cancel();
+    return new Promise((resolve) => {
+      const startedAt = performance.now();
+      let done = false;
+      const fallbackTimer = setTimeout(() => finish(false), estimatedDuration + 250);
+      function finish(spoken) {
+        if (done) return;
+        done = true;
+        clearTimeout(fallbackTimer);
+        if (payload.caption !== false) scheduleHideCaption(250);
+        resolve({ durationMs: Math.max(estimatedDuration, Math.round(performance.now() - startedAt)), spoken });
+      }
+      utter.onend = () => finish(true);
+      utter.onerror = () => finish(false);
+      speechSynthesis.speak(utter);
+    });
   }
 
+  function narrate(payload) {
+    narrateInternal(payload, { interrupt: true });
+  }
+
+  let cameraAnimationToken = 0;
   function focusEntity(payload) {
     const mesh = byId.get(payload && payload.entityId);
-    if (!mesh) return;
+    if (!mesh) return Promise.resolve(false);
     const worldPos = new THREE.Vector3();
     mesh.getWorldPosition(worldPos);
-    easeCamera(worldPos, payload.distance || 4, null, null, payload.durationMs != null ? payload.durationMs : 600);
+    return easeCamera(worldPos, payload.distance || 4, null, null, payload.durationMs != null ? payload.durationMs : 600);
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms || 0)));
+  }
+
+  let activeTourToken = 0;
+  function playTour(payload) {
+    const stops = payload && Array.isArray(payload.stops) ? payload.stops : [];
+    const startIndex = payload && payload.startIndex != null ? payload.startIndex : 0;
+    const tourToken = ++activeTourToken;
+    cancelNarration();
+    if (!stops.length) return;
+    (async () => {
+      for (let i = Math.max(0, startIndex); i < stops.length; i += 1) {
+        if (tourToken !== activeTourToken) return;
+        const stop = stops[i] || {};
+        if (stop.preDelayMs > 0) await sleep(stop.preDelayMs);
+        if (tourToken !== activeTourToken) return;
+        const focusOk = await focusEntity({
+          entityId: stop.entityId,
+          distance: stop.distance || 4,
+          durationMs: stop.focusDurationMs != null ? stop.focusDurationMs : 600,
+        });
+        if (!focusOk) continue;
+
+        const narrationMs = stop.text ? estimateSpeechMs(stop.text, stop.rate || 1) : 0;
+        const holdMs = Math.max(0, stop.minHoldMs || 0);
+        const postDelayMs = Math.max(0, stop.postDelayMs || 0);
+        const highlightDuration = stop.highlightDurationMs != null
+          ? Math.max(100, stop.highlightDurationMs)
+          : Math.max(1500, narrationMs + holdMs + postDelayMs);
+        if (Array.isArray(stop.highlightIds) && stop.highlightIds.length) {
+          highlight({
+            entityIds: stop.highlightIds,
+            durationMs: highlightDuration,
+            color: stop.color || '#ffffff',
+          });
+        }
+
+        if (stop.text) {
+          const narrationPromise = narrateInternal({
+            text: stop.text,
+            voice: stop.voice || null,
+            rate: stop.rate || 1,
+            caption: stop.caption !== false,
+          }, { interrupt: false });
+          if (stop.waitForSpeech !== false) {
+            await narrationPromise;
+          }
+        }
+        if (tourToken !== activeTourToken) return;
+        if (holdMs > 0) await sleep(holdMs);
+        if (tourToken !== activeTourToken) return;
+        if (postDelayMs > 0) await sleep(postDelayMs);
+      }
+      if (tourToken === activeTourToken) hideCaption();
+    })();
   }
 
   const highlights = new Map(); // mesh → { rafId, prevEmissive, prevIntensity }
@@ -708,7 +830,7 @@
   }
 
   window.Spatial = {
-    setScene, focus, focusEntity, speak, narrate, highlight, recenter, fit,
+    setScene, focus, focusEntity, speak, narrate, highlight, playTour, recenter, fit,
     setLandscape, clearLandscape,
     setLinks, clearLinks,
   };

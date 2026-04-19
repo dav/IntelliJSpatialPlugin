@@ -11,6 +11,7 @@ import dev.spatial.scene.Link
 import dev.spatial.scene.LinkSet
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
+import dev.spatial.scene.TourRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.concurrent.CopyOnWriteArrayList
@@ -30,6 +31,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         fun onSpeech(message: String) {}
         fun onNarrate(req: Narrate) {}
         fun onHighlight(req: Highlight) {}
+        fun onPlayTour(req: TourRequest) {}
         fun onLandscape(timeline: LandscapeTimeline?) {}
         fun onLinksChanged(links: List<Link>) {}
     }
@@ -93,6 +95,10 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
 
     fun highlight(req: Highlight) {
         listeners.forEach { it.onHighlight(req) }
+    }
+
+    fun playTour(req: TourRequest) {
+        listeners.forEach { it.onPlayTour(req) }
     }
 
     fun pushLandscape(timeline: LandscapeTimeline) {

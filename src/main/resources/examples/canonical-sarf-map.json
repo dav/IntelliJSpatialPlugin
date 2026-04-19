@@ -37,13 +37,20 @@
     {
       "entityId": "catalog",
       "text": "Catalog is the central domain feature and connects the experience and storage lanes.",
-      "highlightIds": ["catalog", "catalog-ui", "catalog-storage"]
+      "highlightIds": ["catalog", "catalog-ui", "catalog-storage"],
+      "focusDurationMs": 900,
+      "minHoldMs": 350,
+      "postDelayMs": 500
     },
     {
       "entityId": "payment-service",
       "text": "Payments cross the domain and infrastructure levels through a dedicated gateway adapter.",
       "highlightIds": ["payment-service", "payments-client", "payments-gateway"],
-      "distance": 7.5
+      "distance": 7.5,
+      "focusDurationMs": 950,
+      "minHoldMs": 300,
+      "postDelayMs": 600,
+      "waitForSpeech": true
     }
   ]
 }
