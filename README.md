@@ -9,7 +9,7 @@ visualized alongside their code.
 <!-- Plugin description -->
 Spatial adds a 3D tool window to IntelliJ IDEA. The IDE's built-in AI agent
 can drive it over MCP — pushing entities, SaRF maps, links, churn landscapes,
-project-structure platters, camera moves, and narration — so project structure, call graphs, dependency
+project-structure platters, feed-forward neural networks, camera moves, and narration — so project structure, call graphs, dependency
 trees, and other codebase artifacts become visual instead of textual.
 
 Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
@@ -55,6 +55,7 @@ Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
 | `spatial_push_links`           | Render edges between entity ids for dependency and architecture views.  |
 | `spatial_clear_links`          | Remove all links while leaving entities and landscapes intact.          |
 | `spatial_push_project_structure` | Render the project as layered folder platters with file blocks.       |
+| `spatial_push_feed_forward_network` | Render a canonical feed-forward neural network from layers and weights. |
 | `spatial_push_churn_landscape` | Render a treemap-like churn landscape from per-file timeline data.      |
 | `spatial_clear_landscape`      | Remove the active churn landscape.                                      |
 | `spatial_push_repo_churn`      | Analyze a git repo and push a churn landscape in one call.              |
@@ -73,6 +74,45 @@ an explicit root path) and renders:
 File blocks carry path metadata so they can open in the IDE on click. Folder
 platters carry folder metadata so current-file focus can still land on the
 nearest container when needed.
+
+## Canonical Feed-Forward Network Contract
+
+For weighted neural-network diagrams, prefer
+`spatial_push_feed_forward_network`. Agents should describe the network
+semantically and let the plugin compute a layered layout.
+
+The canonical contract is defined in
+[`src/main/kotlin/dev/spatial/neural/FeedForwardNetwork.kt`](src/main/kotlin/dev/spatial/neural/FeedForwardNetwork.kt)
+and has these top-level fields:
+
+- `layers`: ordered input-to-output layers with `nodeCount` and optional `nodeLabels`
+- `connections`: weighted node-to-node connections identified by layer id and node index
+- `styles`: optional spacing, color, and link-thickness overrides
+
+The plugin materializes that contract into:
+
+- layer platters
+- node spheres
+- signed weighted links where negative weights are red and positive weights are green
+- input/output node labels
+- a default focus target on the center layer
+
+Minimal example:
+
+```json
+{
+  "layers": [
+    { "id": "inputs", "label": "Inputs", "nodeCount": 3, "nodeLabels": ["bias", "distance", "velocity"] },
+    { "id": "hidden-1", "label": "Hidden 1", "nodeCount": 4 },
+    { "id": "outputs", "label": "Outputs", "nodeCount": 2, "nodeLabels": ["turn", "thrust"] }
+  ],
+  "connections": [
+    { "fromLayerId": "inputs", "fromNodeIndex": 0, "toLayerId": "hidden-1", "toNodeIndex": 0, "weight": 0.82 },
+    { "fromLayerId": "inputs", "fromNodeIndex": 1, "toLayerId": "hidden-1", "toNodeIndex": 0, "weight": -0.35 },
+    { "fromLayerId": "hidden-1", "fromNodeIndex": 2, "toLayerId": "outputs", "toNodeIndex": 1, "weight": 0.57 }
+  ]
+}
+```
 
 ## Canonical SaRF Contract
 

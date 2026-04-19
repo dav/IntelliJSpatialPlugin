@@ -46,6 +46,7 @@ data class Link(
     val label: String? = null,
     val arrow: Boolean = false,
     val opacity: Float = 1f,
+    val thickness: Float? = null,
 )
 
 @Serializable

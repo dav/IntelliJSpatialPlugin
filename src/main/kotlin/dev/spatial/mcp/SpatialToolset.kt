@@ -8,6 +8,8 @@ import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.service
 import com.intellij.openapi.wm.ToolWindowManager
 import dev.spatial.git.GitChurnAnalyzer
+import dev.spatial.neural.FeedForwardNetworkCompiler
+import dev.spatial.neural.FeedForwardNetworkScene
 import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
@@ -237,10 +239,11 @@ class SpatialToolset : McpToolset {
             "service maps, etc. Each link references two entity ids. Links pointing at missing " +
             "entities are silently skipped, so push order doesn't matter. Set merge=true to keep " +
             "existing links and upsert by id; default replaces the whole link set. Prefer " +
-            "`spatial_push_sarf_map` when you have semantic SaRF data and want the plugin to own layout."
+            "`spatial_push_sarf_map` when you have semantic SaRF data and want the plugin to own layout, " +
+            "or `spatial_push_feed_forward_network` for weighted neural-network diagrams."
     )
     suspend fun spatial_push_links(
-        @McpDescription("Edges to render. Each: {id, fromId, toId, color?, label?, arrow?, opacity?}.")
+        @McpDescription("Edges to render. Each: {id, fromId, toId, color?, label?, arrow?, opacity?, thickness?}.")
         links: List<Link>,
         @McpDescription("Keep existing links and upsert by id. Default false (full replace).")
         merge: Boolean = false,
@@ -249,6 +252,49 @@ class SpatialToolset : McpToolset {
         val service = project.service<SceneService>()
         service.pushLinks(links, merge = merge)
         return LinkResult(count = service.links.size)
+    }
+
+    @McpTool(name = "spatial_push_feed_forward_network")
+    @McpDescription(
+        "Render a canonical feed-forward neural network from semantic layer and weight data. " +
+            "Provide ordered layers with node counts and optional node labels plus weighted node-to-node " +
+            "connections; the plugin computes a readable layered layout with input/output labels and " +
+            "weight-aware links where negative weights are red, positive weights are green, and link " +
+            "thickness scales with absolute magnitude."
+    )
+    suspend fun spatial_push_feed_forward_network(
+        @McpDescription(
+            "Canonical feed-forward network contract. Layers are ordered input-to-output; each layer " +
+                "declares a nodeCount and optional nodeLabels; connections target node indices by layer id " +
+                "and must move forward through the layer order. Styles may override spacing, colors, and " +
+                "link-thickness bounds."
+        )
+        scene: FeedForwardNetworkScene,
+        @McpDescription("Clear any active churn landscape before rendering the network. Default true.")
+        clearLandscape: Boolean = true,
+        @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
+        reveal: Boolean = true,
+        @McpDescription("Focus the camera on the center layer after rendering. Default true.")
+        focus: Boolean = true,
+    ): FeedForwardNetworkResult {
+        val project = currentCoroutineContext().project
+        val service = project.service<SceneService>()
+        val materialized = FeedForwardNetworkCompiler.compile(scene)
+
+        if (clearLandscape) service.clearLandscape()
+        service.pushEntities(materialized.entities)
+        service.pushLinks(materialized.links)
+        if (focus) {
+            service.focusEntity(FocusEntity(materialized.defaultFocusEntityId, distance = 10f, durationMs = 800))
+        }
+        if (reveal) revealToolWindow()
+
+        return FeedForwardNetworkResult(
+            layers = scene.layers.size,
+            nodes = scene.layers.sumOf { it.nodeCount },
+            links = materialized.links.size,
+            focusEntityId = materialized.defaultFocusEntityId,
+        )
     }
 
     @McpTool(name = "spatial_push_sarf_map")
@@ -427,6 +473,14 @@ class SpatialToolset : McpToolset {
         val focusEntityId: String? = null,
         val tourStops: Int,
         val tourStarted: Boolean = false,
+    )
+
+    @Serializable
+    data class FeedForwardNetworkResult(
+        val layers: Int,
+        val nodes: Int,
+        val links: Int,
+        val focusEntityId: String,
     )
 
     @Serializable

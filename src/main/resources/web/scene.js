@@ -39,6 +39,8 @@
 
   const entityRoot = new THREE.Group();
   scene.add(entityRoot);
+  const labelRoot = new THREE.Group();
+  scene.add(labelRoot);
   const byId = new Map();
   const raycaster = new THREE.Raycaster();
   const pointerNdc = new THREE.Vector2();
@@ -254,7 +256,7 @@
     pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointerNdc, camera);
-    const hits = raycaster.intersectObjects([...entityRoot.children, ...landscapeRoot.children], true);
+    const hits = raycaster.intersectObjects([...entityRoot.children, ...labelRoot.children, ...landscapeRoot.children], true);
     for (const hit of hits) {
       const spatial = findSpatialObject(hit.object);
       if (spatial) return spatial;
@@ -284,6 +286,9 @@
       ? target.userData.spatialFocusObject
       : target;
     const box = new THREE.Box3().setFromObject(focusTarget);
+    if (focusTarget.userData && focusTarget.userData.label && focusTarget.userData.label.sprite) {
+      box.union(new THREE.Box3().setFromObject(focusTarget.userData.label.sprite));
+    }
     if (box.isEmpty()) {
       const worldPos = new THREE.Vector3();
       focusTarget.getWorldPosition(worldPos);
@@ -425,29 +430,81 @@
     return sprite;
   }
 
-  function syncLabel(mesh, entity) {
-    const existing = mesh.userData.label;
-    if (existing && existing.text === (entity.label || '')) return;
-    if (existing) {
-      mesh.remove(existing.sprite);
-      existing.sprite.material.map.dispose();
-      existing.sprite.material.dispose();
-      mesh.userData.label = null;
+  function entityLabelOptions(entity) {
+    const meta = entity.meta || {};
+    if (meta.networkType === 'feedForwardLayer') {
+      return {
+        fontSizePx: 44,
+        maxTextWidthPx: 420,
+        minWorldWidth: 1.5,
+        maxWorldWidth: 2.8,
+        baseWorldHeight: 0.34,
+        extraLineHeight: 0.11,
+        paddingX: 18,
+        paddingY: 10,
+      };
     }
-    if (!entity.label) return;
-    const sprite = makeLabelSprite(entity.label, {
+    if (meta.networkType === 'feedForwardNode') {
+      return {
+        fontSizePx: 40,
+        maxTextWidthPx: 340,
+        minWorldWidth: 0.75,
+        maxWorldWidth: 1.7,
+        baseWorldHeight: 0.22,
+        extraLineHeight: 0.08,
+        paddingX: 16,
+        paddingY: 8,
+      };
+    }
+    return {
       maxTextWidthPx: 640,
       minWorldWidth: 1.3,
       maxWorldWidth: 3.8,
       baseWorldHeight: 0.45,
       extraLineHeight: 0.16,
-    });
-    const scale = entity.scale || { x: 1, y: 1, z: 1 };
-    sprite.position.set(0, (scale.y || 1) * 0.7 + 0.45, 0);
-    // Counter-scale so a parent scale doesn't stretch the label.
+    };
+  }
+
+  function entityTopY(entity) {
+    const p = entity.position || { x: 0, y: 0, z: 0 };
+    const s = entity.scale || { x: 1, y: 1, z: 1 };
+    switch ((entity.kind || 'box').toLowerCase()) {
+      case 'sphere':
+      case 'box':
+      case 'cylinder':
+      case 'cone':
+        return (p.y || 0) + (s.y || 1) / 2;
+      case 'plane':
+        return p.y || 0;
+      default:
+        return (p.y || 0) + (s.y || 1) / 2;
+    }
+  }
+
+  function syncLabel(mesh, entity) {
+    const existing = mesh.userData.label;
+    if (existing) {
+      labelRoot.remove(existing.sprite);
+      existing.sprite.material.map.dispose();
+      existing.sprite.material.dispose();
+      mesh.userData.label = null;
+    }
+    if (!entity.label) return;
+    const sprite = makeLabelSprite(entity.label, entityLabelOptions(entity));
+    const p = entity.position || { x: 0, y: 0, z: 0 };
     const labelScale = sprite.userData.labelWorldScale || { width: 1.8, height: 0.45 };
-    sprite.scale.set(labelScale.width / (scale.x || 1), labelScale.height / (scale.y || 1), 1);
-    mesh.add(sprite);
+    sprite.position.set(
+      p.x || 0,
+      entityTopY(entity) + labelScale.height / 2 + 0.14,
+      p.z || 0,
+    );
+    sprite.userData.spatialId = entity.id;
+    sprite.userData.spatialMeta = entity.meta || {};
+    sprite.userData.spatialPath = openPathFromMeta(entity.meta || {});
+    sprite.userData.spatialLine = openLineFromMeta(entity.meta || {});
+    sprite.userData.spatialColumn = openColumnFromMeta(entity.meta || {});
+    sprite.userData.spatialFocusObject = mesh;
+    labelRoot.add(sprite);
     mesh.userData.label = { text: entity.label, sprite };
   }
 
@@ -469,6 +526,11 @@
       let mesh = byId.get(entity.id);
       if (!mesh || mesh.userData.kind !== entity.kind) {
         if (mesh) {
+          if (mesh.userData.label) {
+            labelRoot.remove(mesh.userData.label.sprite);
+            mesh.userData.label.sprite.material.map.dispose();
+            mesh.userData.label.sprite.material.dispose();
+          }
           entityRoot.remove(mesh);
           mesh.geometry.dispose();
           mesh.material.dispose();
@@ -491,6 +553,7 @@
       if (!seen.has(id)) {
         const mesh = byId.get(id);
         if (mesh.userData.label) {
+          labelRoot.remove(mesh.userData.label.sprite);
           mesh.userData.label.sprite.material.map.dispose();
           mesh.userData.label.sprite.material.dispose();
         }
@@ -554,12 +617,13 @@
   }
 
   function fit() {
-    if (byId.size === 0 && landscapeCells.size === 0) {
+    if (byId.size === 0 && landscapeCells.size === 0 && labelRoot.children.length === 0) {
       recenter();
       return;
     }
     const box = new THREE.Box3();
     if (byId.size) box.union(new THREE.Box3().setFromObject(entityRoot));
+    if (labelRoot.children.length) box.union(new THREE.Box3().setFromObject(labelRoot));
     if (landscapeCells.size) box.union(new THREE.Box3().setFromObject(landscapeRoot));
     if (box.isEmpty()) { recenter(); return; }
     const sphere = new THREE.Sphere();
@@ -1024,15 +1088,30 @@
     const color = new THREE.Color(def.color || '#7d8590');
     const opacity = def.opacity == null ? 1 : def.opacity;
     const transparent = opacity < 1;
+    const thickness = Number(def.thickness);
+    const hasThickness = Number.isFinite(thickness) && thickness > 0.001;
 
-    const lineGeom = new THREE.BufferGeometry().setFromPoints([a, b]);
-    const lineMat = new THREE.LineBasicMaterial({ color, transparent, opacity });
-    group.add(new THREE.Line(lineGeom, lineMat));
+    if (hasThickness) {
+      const rod = new THREE.Mesh(
+        new THREE.CylinderGeometry(thickness / 2, thickness / 2, a.distanceTo(b), 12),
+        new THREE.MeshStandardMaterial({ color, transparent, opacity, metalness: 0.08, roughness: 0.55 }),
+      );
+      rod.position.copy(a).lerp(b, 0.5);
+      rod.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3().subVectors(b, a).normalize(),
+      );
+      group.add(rod);
+    } else {
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([a, b]);
+      const lineMat = new THREE.LineBasicMaterial({ color, transparent, opacity });
+      group.add(new THREE.Line(lineGeom, lineMat));
+    }
 
     if (def.arrow) {
       const dir = new THREE.Vector3().subVectors(b, a).normalize();
       const dist = a.distanceTo(b);
-      const arrowLen = Math.min(0.45, Math.max(0.12, dist * 0.08));
+      const arrowLen = Math.min(0.45, Math.max(0.12, dist * 0.08, hasThickness ? thickness * 3.2 : 0));
       const cone = new THREE.Mesh(
         new THREE.ConeGeometry(arrowLen * 0.45, arrowLen, 14),
         new THREE.MeshStandardMaterial({ color, transparent, opacity, metalness: 0.1, roughness: 0.5 }),
