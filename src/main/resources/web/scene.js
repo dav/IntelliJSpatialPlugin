@@ -570,8 +570,13 @@
   }
 
   let cameraAnimationToken = 0;
+  function focusTargetById(entityId) {
+    if (!entityId) return null;
+    return byId.get(entityId) || landscapeCells.get(entityId)?.mesh || null;
+  }
+
   function focusEntity(payload) {
-    const mesh = byId.get(payload && payload.entityId);
+    const mesh = focusTargetById(payload && payload.entityId);
     if (!mesh) return Promise.resolve(false);
     const worldPos = new THREE.Vector3();
     mesh.getWorldPosition(worldPos);

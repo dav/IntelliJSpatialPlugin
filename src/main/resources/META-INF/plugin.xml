@@ -19,4 +19,17 @@
     <extensions defaultExtensionNs="com.intellij.mcpServer">
         <mcpToolset implementation="dev.spatial.mcp.SpatialToolset"/>
     </extensions>
+
+    <actions>
+        <action
+            id="dev.spatial.actions.FocusCurrentFileInSpatialAction"
+            class="dev.spatial.actions.FocusCurrentFileInSpatialAction"
+            text="Focus Current File In Spatial"
+            description="Focus the spatial entity associated with the current file">
+            <keyboard-shortcut keymap="$default" first-keystroke="alt shift back_slash"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta alt back_slash"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

@@ -17,6 +17,7 @@ import dev.spatial.scene.Link
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.TourRequest
 import dev.spatial.scene.TourStop
+import dev.spatial.project.ProjectStructureMapBuilder
 import dev.spatial.service.SceneService
 import dev.spatial.sarf.SarfMapCompiler
 import dev.spatial.sarf.SarfMapScene
@@ -42,6 +43,7 @@ class SpatialToolset : McpToolset {
             "Each entity: {id, kind (box|sphere|cylinder|cone|plane), position:{x,y,z}, " +
             "rotation:{x,y,z}, scale:{x,y,z}, color (#hex), label, opacity}. " +
             "Use merge=true to upsert by id; default replaces everything. Prefer " +
+            "`spatial_push_project_structure` for the default project/folder view, " +
             "`spatial_push_sarf_map` for semantic architecture maps and `spatial_push_churn_landscape` " +
             "or `spatial_push_repo_churn` for file-history landscapes."
     )
@@ -143,6 +145,62 @@ class SpatialToolset : McpToolset {
         val project = currentCoroutineContext().project
         project.service<SceneService>().highlight(Highlight(entityIds, durationMs, color))
         return SimpleResult(ok = true)
+    }
+
+    @McpTool(name = "spatial_push_project_structure")
+    @McpDescription(
+        "Render the project as a stacked folder/file structure view. Each folder becomes a platter, " +
+            "files become blocks on that platter, and subfolders become smaller platters elevated above " +
+            "their parent. Use this as the default project visualization when no more specific style is requested."
+    )
+    suspend fun spatial_push_project_structure(
+        @McpDescription("Absolute path to the directory to visualize. Empty/null = current IDE project root.")
+        rootPath: String? = null,
+        @McpDescription("Maximum folder nesting depth to include below the root. Default 4.")
+        maxDepth: Int = 4,
+        @McpDescription("Maximum immediate child entries to include per folder. Default 80.")
+        maxEntriesPerDirectory: Int = 80,
+        @McpDescription("Whether to include hidden dotfiles and dot-directories. Default false.")
+        includeHidden: Boolean = false,
+        @McpDescription("Clear any active churn landscape before rendering this project structure. Default true.")
+        clearLandscape: Boolean = true,
+        @McpDescription("Clear any active links before rendering this project structure. Default true.")
+        clearLinks: Boolean = true,
+        @McpDescription("Focus the camera on the root platter after rendering. Default true.")
+        focus: Boolean = true,
+        @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
+        reveal: Boolean = true,
+    ): ProjectStructureResult {
+        val project = currentCoroutineContext().project
+        val service = project.service<SceneService>()
+        val resolvedRoot = rootPath?.takeIf { it.isNotBlank() }?.let(Paths::get)
+            ?: project.basePath?.let(Paths::get)
+            ?: error("No rootPath given and the project has no base path.")
+        if (!resolvedRoot.toFile().isDirectory) error("Not a directory: $resolvedRoot")
+
+        val materialized = ProjectStructureMapBuilder.build(
+            root = resolvedRoot,
+            projectBasePath = project.basePath,
+            maxDepth = maxDepth,
+            maxEntriesPerDirectory = maxEntriesPerDirectory,
+            includeHidden = includeHidden,
+        )
+
+        if (clearLandscape) service.clearLandscape()
+        if (clearLinks) service.clearLinks()
+        service.pushEntities(materialized.entities)
+        if (focus) {
+            service.focusEntity(FocusEntity(materialized.rootEntityId, distance = 14f, durationMs = 800))
+        }
+        if (reveal) revealToolWindow()
+
+        return ProjectStructureResult(
+            rootPath = resolvedRoot.toString(),
+            directories = materialized.directories,
+            files = materialized.files,
+            entities = materialized.entities.size,
+            rootEntityId = materialized.rootEntityId,
+        )
     }
 
     @McpTool(name = "spatial_push_churn_landscape")
@@ -349,6 +407,15 @@ class SpatialToolset : McpToolset {
         val files: Int,
         val firstFrameLabel: String? = null,
         val lastFrameLabel: String? = null,
+    )
+
+    @Serializable
+    data class ProjectStructureResult(
+        val rootPath: String,
+        val directories: Int,
+        val files: Int,
+        val entities: Int,
+        val rootEntityId: String,
     )
 
     @Serializable

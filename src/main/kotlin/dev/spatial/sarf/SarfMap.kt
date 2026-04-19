@@ -117,6 +117,7 @@ object SarfMapCompiler {
 
     fun compile(scene: SarfMapScene): MaterializedSarfMap {
         require(scene.clusters.isNotEmpty()) { "SaRF scene must include at least one cluster." }
+        val modulesByCluster = scene.modules.groupBy { it.clusterId }
 
         val levels = resolveLevels(scene)
         val levelIds = levels.map { it.id }.toSet()
@@ -190,6 +191,7 @@ object SarfMapCompiler {
                     levelId = level.id,
                     rootByCluster = rootByCluster,
                     clustersById = clustersById,
+                    modulesByCluster = modulesByCluster,
                 )
             } ?: 4f
         }
@@ -212,11 +214,13 @@ object SarfMapCompiler {
                     .sortedWith(compareBy<SarfCluster> { pathKey(it, clustersById) }.thenBy { it.id })
                 if (clusters.isEmpty()) return@forEach
 
-                val occupiedWidth = clusters.sumOf { clusterFootprint(it, scene).width.toDouble() }.toFloat() +
+                val occupiedWidth = clusters.sumOf {
+                    clusterFootprint(modulesByCluster.getValueOrEmpty(it.id), scene).width.toDouble()
+                }.toFloat() +
                     scene.styles.clusterGap * (clusters.size - 1).coerceAtLeast(0)
                 var x = familyStarts.getValue(familyId) + (familyWidths.getValue(familyId) - occupiedWidth) / 2f
                 clusters.forEach { cluster ->
-                    val footprint = clusterFootprint(cluster, scene)
+                    val footprint = clusterFootprint(modulesByCluster.getValueOrEmpty(cluster.id), scene)
                     val depth = hierarchyDepth(cluster, clustersById)
                     clusterLayouts[cluster.id] = ClusterLayout(
                         cluster = cluster,
@@ -279,18 +283,16 @@ object SarfMapCompiler {
             )
         }
 
-        val modulesByCluster = scene.modules.groupBy { it.clusterId }
         modulesByCluster.forEach { (clusterId, modules) ->
             val layout = clusterLayouts.getValue(clusterId)
             val sortedModules = modules.sortedBy { it.id }
-            val columns = max(1, ceil(sqrt(sortedModules.size.toDouble())).toInt())
-            val rows = ceil(sortedModules.size / columns.toDouble()).toInt()
+            val grid = moduleGrid(sortedModules, scene.styles)
             sortedModules.forEachIndexed { index, module ->
-                val column = index % columns
-                val row = index / columns
-                val xOffset = (column - (columns - 1) / 2f) * scene.styles.moduleGap
-                val zOffset = (row - (rows - 1) / 2f) * scene.styles.moduleGap
-                val moduleSize = scene.styles.moduleBaseSize * moduleScale(module.size)
+                val column = index % grid.columns
+                val row = index / grid.columns
+                val xOffset = (column - (grid.columns - 1) / 2f) * grid.pitchX
+                val zOffset = (row - (grid.rows - 1) / 2f) * grid.pitchZ
+                val moduleSize = moduleDiameter(module, scene.styles)
                 val baseColor = module.color ?: shiftTowardWhite(
                     layout.cluster.color ?: resolveLevelColor(levels[layout.levelIndex], layout.levelIndex, scene.styles),
                     0.28f,
@@ -398,12 +400,15 @@ object SarfMapCompiler {
         levelId: String,
         rootByCluster: Map<String, String>,
         clustersById: Map<String, SarfCluster>,
+        modulesByCluster: Map<String, List<SarfModule>>,
     ): Float {
         val clusters = clustersById.values
             .filter { it.levelId == levelId && rootByCluster.getValue(it.id) == familyId }
             .sortedWith(compareBy<SarfCluster> { pathKey(it, clustersById) }.thenBy { it.id })
         if (clusters.isEmpty()) return 4f
-        return clusters.sumOf { clusterFootprint(it, scene).width.toDouble() }.toFloat() +
+        return clusters.sumOf {
+            clusterFootprint(modulesByCluster.getValueOrEmpty(it.id), scene).width.toDouble()
+        }.toFloat() +
             scene.styles.clusterGap * (clusters.size - 1).coerceAtLeast(0)
     }
 
@@ -427,12 +432,10 @@ object SarfMapCompiler {
         return parts.asReversed().joinToString("/")
     }
 
-    private fun clusterFootprint(cluster: SarfCluster, scene: SarfMapScene): Footprint {
-        val modules = scene.modules.filter { it.clusterId == cluster.id }
-        val columns = max(1, ceil(sqrt(max(modules.size, 1).toDouble())).toInt())
-        val rows = max(1, ceil(max(modules.size, 1) / columns.toDouble()).toInt())
-        val width = max(2.8f, 1.6f + (columns - 1) * scene.styles.moduleGap)
-        val depth = max(2.2f, 1.2f + (rows - 1) * scene.styles.moduleGap)
+    private fun clusterFootprint(modules: List<SarfModule>, scene: SarfMapScene): Footprint {
+        val grid = moduleGrid(modules, scene.styles)
+        val width = max(2.8f, 1.6f + grid.contentWidth)
+        val depth = max(2.2f, 1.2f + grid.contentDepth)
         return Footprint(width = width, depth = depth)
     }
 
@@ -441,6 +444,28 @@ object SarfMapCompiler {
             "box", "sphere", "cylinder", "cone" -> kind.lowercase()
             else -> "sphere"
         }
+
+    private fun moduleDiameter(module: SarfModule, styles: SarfStyles): Float =
+        styles.moduleBaseSize * moduleScale(module.size)
+
+    private fun moduleGrid(modules: List<SarfModule>, styles: SarfStyles): ModuleGrid {
+        val count = max(modules.size, 1)
+        val columns = max(1, ceil(sqrt(count.toDouble())).toInt())
+        val rows = max(1, ceil(count / columns.toDouble()).toInt())
+        val maxDiameter = modules.maxOfOrNull { moduleDiameter(it, styles).toDouble() }?.toFloat()
+            ?: styles.moduleBaseSize * moduleScale(1f)
+        val pitch = maxDiameter + styles.moduleGap
+        val contentWidth = maxDiameter + (columns - 1).coerceAtLeast(0) * pitch
+        val contentDepth = maxDiameter + (rows - 1).coerceAtLeast(0) * pitch
+        return ModuleGrid(
+            columns = columns,
+            rows = rows,
+            pitchX = pitch,
+            pitchZ = pitch,
+            contentWidth = contentWidth,
+            contentDepth = contentDepth,
+        )
+    }
 
     private fun moduleScale(size: Float): Float = min(1.8f, max(0.8f, sqrt(max(size, 0.25f))))
 
@@ -486,6 +511,15 @@ object SarfMapCompiler {
 
     private data class Footprint(val width: Float, val depth: Float)
 
+    private data class ModuleGrid(
+        val columns: Int,
+        val rows: Int,
+        val pitchX: Float,
+        val pitchZ: Float,
+        val contentWidth: Float,
+        val contentDepth: Float,
+    )
+
     private enum class Mark { VISITING, VISITED }
 
     private data class ClusterLayout(
@@ -501,3 +535,5 @@ object SarfMapCompiler {
 
     private data class Rgb(val red: Int, val green: Int, val blue: Int)
 }
+
+private fun <K, V> Map<K, List<V>>.getValueOrEmpty(key: K): List<V> = get(key).orEmpty()

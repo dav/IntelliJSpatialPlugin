@@ -9,7 +9,7 @@ visualized alongside their code.
 <!-- Plugin description -->
 Spatial adds a 3D tool window to IntelliJ IDEA. The IDE's built-in AI agent
 can drive it over MCP — pushing entities, SaRF maps, links, churn landscapes,
-camera moves, and narration — so project structure, call graphs, dependency
+project-structure platters, camera moves, and narration — so project structure, call graphs, dependency
 trees, and other codebase artifacts become visual instead of textual.
 
 Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
@@ -54,10 +54,25 @@ Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
 | `spatial_play_tour`            | Play a synchronized multi-stop tour with speech, focus, and highlight.  |
 | `spatial_push_links`           | Render edges between entity ids for dependency and architecture views.  |
 | `spatial_clear_links`          | Remove all links while leaving entities and landscapes intact.          |
+| `spatial_push_project_structure` | Render the project as layered folder platters with file blocks.       |
 | `spatial_push_churn_landscape` | Render a treemap-like churn landscape from per-file timeline data.      |
 | `spatial_clear_landscape`      | Remove the active churn landscape.                                      |
 | `spatial_push_repo_churn`      | Analyze a git repo and push a churn landscape in one call.              |
 | `spatial_push_sarf_map`        | Render a canonical SaRF map from semantic structure instead of geometry. |
+
+## Default Project View
+
+For a general-purpose project visualization, prefer
+`spatial_push_project_structure`. The plugin scans the current project tree (or
+an explicit root path) and renders:
+
+- each folder as a platter
+- each file in that folder as a block on top of the platter
+- each subfolder as a smaller platter elevated above its parent
+
+File blocks carry path metadata so they can open in the IDE on click. Folder
+platters carry folder metadata so current-file focus can still land on the
+nearest container when needed.
 
 ## Canonical SaRF Contract
 
