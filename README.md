@@ -1,4 +1,4 @@
-# Spatial — 3D scene tool window for IntelliJ
+# Spatial — 3D scene tool window for JetBrains IDEs
 
 Spatial is an open-source IntelliJ Platform plugin that adds a 3D tool window
 to the IDE and exposes it to the built-in AI agent as an MCP skill. Agents can
@@ -7,12 +7,12 @@ renders them with Three.js inside a JCEF browser so the user sees the project
 visualized alongside their code.
 
 <!-- Plugin description -->
-Spatial adds a 3D tool window to IntelliJ IDEA. The IDE's built-in AI agent
+Spatial adds a 3D tool window to JetBrains IDEs. The IDE's built-in AI agent
 can drive it over MCP — pushing entities, SaRF maps, links, churn landscapes,
 project-structure platters, feed-forward neural networks, camera moves, and narration — so project structure, call graphs, dependency
 trees, and other codebase artifacts become visual instead of textual.
 
-Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
+Ships Three.js bundled offline. Requires a JetBrains IDE with JCEF.
 <!-- Plugin description end -->
 
 ## Architecture
@@ -77,6 +77,19 @@ an explicit root path) and renders:
 File blocks carry path metadata so they can open in the IDE on click. Folder
 platters carry folder metadata so current-file focus can still land on the
 nearest container when needed.
+
+## Using The Scene
+
+The Spatial pane supports direct interaction:
+
+- single click opens the associated source file when the clicked entity has path metadata
+- single click on a non-openable entity shows `No associated path`
+- double click focuses the clicked entity in the scene
+- drag orbits, right-drag pans, and scroll zooms
+
+The plugin also includes a `Focus Current File In Spatial` IDE action. It can
+focus the spatial entity for the file currently open in the editor, and is
+available from Find Action plus the editor and project-view context menus.
 
 ## Interactive Controls And Bindings
 
@@ -252,6 +265,9 @@ Requires JDK 21+ and a JetBrains Runtime that includes JCEF.
    ```
 4. For a semantic architecture map, prefer `spatial_push_sarf_map` with a
    canonical SaRF payload instead of hand-placed entities.
+5. Use the scene directly with single-click open, double-click focus, or the
+   `Focus Current File In Spatial` action when you want to jump from code to
+   the matching spatial entity.
 
 ## Starting from the template
 
