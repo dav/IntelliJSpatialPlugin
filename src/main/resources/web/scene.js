@@ -319,30 +319,109 @@
     focusObject(target, 450);
   }
 
-  function makeLabelSprite(text) {
+  function splitLabelSegment(ctx, segment, maxWidthPx) {
+    if (ctx.measureText(segment).width <= maxWidthPx) return [segment];
+    const parts = [];
+    let current = '';
+    for (const ch of segment) {
+      const candidate = current + ch;
+      if (current && ctx.measureText(candidate).width > maxWidthPx) {
+        parts.push(current);
+        current = ch;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) parts.push(current);
+    return parts;
+  }
+
+  function labelSegments(text) {
+    return String(text || '')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/([./_\\\\-]+)/g, ' $1 ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+  }
+
+  function wrapLabelLines(ctx, text, maxWidthPx) {
+    const segments = labelSegments(text);
+    if (segments.length === 0) return [''];
+    const lines = [];
+    let current = '';
+    segments.forEach((segment) => {
+      splitLabelSegment(ctx, segment, maxWidthPx).forEach((part) => {
+        const candidate = current ? `${current} ${part}` : part;
+        if (current && ctx.measureText(candidate).width > maxWidthPx) {
+          lines.push(current);
+          current = part;
+        } else {
+          current = candidate;
+        }
+      });
+    });
+    if (current) lines.push(current);
+    return lines;
+  }
+
+  function computeLabelWorldScale(logicalWidth, logicalHeight, lineCount, options) {
+    const minWorldWidth = options.minWorldWidth ?? 1.2;
+    const maxWorldWidth = options.maxWorldWidth ?? 3.4;
+    const baseWorldHeight = options.baseWorldHeight ?? 0.45;
+    const extraLineHeight = options.extraLineHeight ?? 0.14;
+    const worldHeight = baseWorldHeight + Math.max(0, lineCount - 1) * extraLineHeight;
+    const aspectWidth = worldHeight * (logicalWidth / Math.max(1, logicalHeight));
+    return {
+      width: Math.max(minWorldWidth, Math.min(maxWorldWidth, aspectWidth)),
+      height: worldHeight,
+    };
+  }
+
+  function makeLabelSprite(text, options = {}) {
+    const fontSizePx = options.fontSizePx ?? 56;
+    const maxTextWidthPx = options.maxTextWidthPx ?? 700;
+    const paddingX = options.paddingX ?? 28;
+    const paddingY = options.paddingY ?? 18;
+    const lineHeightPx = options.lineHeightPx ?? Math.ceil(fontSizePx * 1.15);
+    const radiusPx = options.radiusPx ?? 12;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
     const canvas = document.createElement('canvas');
-    canvas.width = 512; canvas.height = 128;
     const ctx = canvas.getContext('2d');
-    ctx.font = 'bold 56px -apple-system, "Segoe UI", sans-serif';
-    const padding = 24;
-    const metrics = ctx.measureText(text);
-    const textW = Math.min(canvas.width - padding * 2, metrics.width);
+    ctx.font = `bold ${fontSizePx}px -apple-system, "Segoe UI", sans-serif`;
+
+    const lines = wrapLabelLines(ctx, text, maxTextWidthPx);
+    const textWidthPx = Math.max(1, ...lines.map((line) => ctx.measureText(line).width));
+    const logicalWidth = Math.ceil(textWidthPx + paddingX * 2);
+    const logicalHeight = Math.ceil(lines.length * lineHeightPx + paddingY * 2);
+
+    canvas.width = Math.ceil(logicalWidth * dpr);
+    canvas.height = Math.ceil(logicalHeight * dpr);
+
+    ctx.scale(dpr, dpr);
+    ctx.font = `bold ${fontSizePx}px -apple-system, "Segoe UI", sans-serif`;
     ctx.fillStyle = 'rgba(20, 21, 24, 0.82)';
-    const rx = (canvas.width - textW - padding * 2) / 2;
-    const ry = (canvas.height - 80) / 2;
     ctx.beginPath();
-    ctx.roundRect(rx, ry, textW + padding * 2, 80, 12);
+    ctx.roundRect(0, 0, logicalWidth, logicalHeight, radiusPx);
     ctx.fill();
+
     ctx.fillStyle = '#f1f3f5';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    lines.forEach((line, index) => {
+      const y = paddingY + lineHeightPx * index + lineHeightPx / 2;
+      ctx.fillText(line, logicalWidth / 2, y);
+    });
+
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
     const sprite = new THREE.Sprite(material);
+    const worldScale = computeLabelWorldScale(logicalWidth, logicalHeight, lines.length, options);
     sprite.renderOrder = 999;
-    sprite.scale.set(1.8, 0.45, 1);
+    sprite.scale.set(worldScale.width, worldScale.height, 1);
+    sprite.userData.labelWorldScale = worldScale;
     return sprite;
   }
 
@@ -356,11 +435,18 @@
       mesh.userData.label = null;
     }
     if (!entity.label) return;
-    const sprite = makeLabelSprite(entity.label);
+    const sprite = makeLabelSprite(entity.label, {
+      maxTextWidthPx: 640,
+      minWorldWidth: 1.3,
+      maxWorldWidth: 3.8,
+      baseWorldHeight: 0.45,
+      extraLineHeight: 0.16,
+    });
     const scale = entity.scale || { x: 1, y: 1, z: 1 };
     sprite.position.set(0, (scale.y || 1) * 0.7 + 0.45, 0);
     // Counter-scale so a parent scale doesn't stretch the label.
-    sprite.scale.set(1.8 / (scale.x || 1), 0.45 / (scale.y || 1), 1);
+    const labelScale = sprite.userData.labelWorldScale || { width: 1.8, height: 0.45 };
+    sprite.scale.set(labelScale.width / (scale.x || 1), labelScale.height / (scale.y || 1), 1);
     mesh.add(sprite);
     mesh.userData.label = { text: entity.label, sprite };
   }
@@ -828,9 +914,17 @@
       // Label sits above the cell in world space (not parented to the scaled mesh,
       // so the unit Y-scale doesn't distort it).
       const fileLabel = path.split('/').pop();
-      const labelSprite = makeLabelSprite(fileLabel);
+      const labelSprite = makeLabelSprite(fileLabel, {
+        fontSizePx: 48,
+        maxTextWidthPx: 540,
+        minWorldWidth: 0.9,
+        maxWorldWidth: 2.4,
+        baseWorldHeight: 0.28,
+        extraLineHeight: 0.1,
+        paddingX: 22,
+        paddingY: 12,
+      });
       labelSprite.position.set(mesh.position.x, 0, mesh.position.z);
-      labelSprite.scale.set(1.4, 0.35, 1);
       labelSprite.visible = false;
       labelSprite.userData.spatialPath = path;
       labelSprite.userData.spatialFocusObject = mesh;
@@ -950,9 +1044,17 @@
     }
 
     if (def.label) {
-      const sprite = makeLabelSprite(def.label);
+      const sprite = makeLabelSprite(def.label, {
+        fontSizePx: 42,
+        maxTextWidthPx: 420,
+        minWorldWidth: 0.8,
+        maxWorldWidth: 2.1,
+        baseWorldHeight: 0.24,
+        extraLineHeight: 0.08,
+        paddingX: 18,
+        paddingY: 10,
+      });
       sprite.position.copy(a).lerp(b, 0.5).add(new THREE.Vector3(0, 0.35, 0));
-      sprite.scale.set(1.2, 0.3, 1);
       group.add(sprite);
     }
 
