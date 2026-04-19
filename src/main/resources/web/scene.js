@@ -468,12 +468,55 @@
     pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(pointerNdc, camera);
-    const hits = raycaster.intersectObjects([...entityRoot.children, ...labelRoot.children, ...landscapeRoot.children], true);
+    return pickSpatialObjectFromRaycaster(raycaster);
+  }
+
+  function pickSpatialObjectFromRaycaster(activeRaycaster) {
+    const hits = activeRaycaster.intersectObjects([...entityRoot.children, ...labelRoot.children, ...landscapeRoot.children], true);
     for (const hit of hits) {
       const spatial = findSpatialObject(hit.object);
       if (spatial) return spatial;
     }
     return null;
+  }
+
+  function pickSpatialObjectAtXrInputSource(frame, inputSource) {
+    if (!frame || !inputSource || !inputSource.targetRaySpace) return null;
+    const referenceSpace = renderer.xr.getReferenceSpace ? renderer.xr.getReferenceSpace() : null;
+    if (!referenceSpace) return null;
+    const pose = frame.getPose(inputSource.targetRaySpace, referenceSpace);
+    if (!pose) return null;
+    const transform = pose.transform;
+    const origin = new THREE.Vector3(
+      transform.position.x,
+      transform.position.y,
+      transform.position.z,
+    );
+    const orientation = new THREE.Quaternion(
+      transform.orientation.x,
+      transform.orientation.y,
+      transform.orientation.z,
+      transform.orientation.w,
+    );
+    const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(orientation).normalize();
+    raycaster.set(origin, direction);
+    return pickSpatialObjectFromRaycaster(raycaster);
+  }
+
+  function handleXrSelect(event) {
+    const target = pickSpatialObjectAtXrInputSource(event && event.frame, event && event.inputSource);
+    if (!target) return;
+    const spatialId = target.userData ? target.userData.spatialId : null;
+    const controlId = spatialId ? controlIdByEntityId.get(spatialId) : null;
+    if (controlId) {
+      selectControl(controlId);
+      if (!(target.userData && target.userData.spatialPath)) return;
+    }
+    if (target.userData && target.userData.spatialPath) {
+      sendOpenRequest(target);
+      return;
+    }
+    showNotice('No associated path');
   }
 
   function cancelPendingSingleClick() {
@@ -1298,7 +1341,9 @@
         optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
       });
       immersiveSession = session;
+      session.addEventListener('select', handleXrSelect);
       session.addEventListener('end', () => {
+        session.removeEventListener('select', handleXrSelect);
         immersiveSession = null;
         resetXrRig();
         refreshImmersiveButton();
