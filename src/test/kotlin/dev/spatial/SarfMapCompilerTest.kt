@@ -8,6 +8,7 @@ import dev.spatial.sarf.SarfMapScene
 import dev.spatial.sarf.SarfModule
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonPrimitive
 import junit.framework.TestCase
 
 class SarfMapCompilerTest : TestCase() {
@@ -68,5 +69,41 @@ class SarfMapCompilerTest : TestCase() {
         assertNotNull(materialized.entities.firstOrNull { it.id == "level:experience" })
         assertNotNull(materialized.entities.firstOrNull { it.id == "level:domain" })
         assertEquals(5, materialized.entities.size)
+    }
+
+    fun testCompilerCarriesPathMetadataIntoClusterAndModuleEntities() {
+        val scene = SarfMapScene(
+            clusters = listOf(
+                SarfCluster(
+                    id = "catalog",
+                    label = "Catalog",
+                    levelId = "domain",
+                    path = "app/domain/catalog",
+                    line = 12,
+                    column = 3,
+                )
+            ),
+            modules = listOf(
+                SarfModule(
+                    id = "catalog-service",
+                    label = "CatalogService",
+                    clusterId = "catalog",
+                    path = "app/domain/catalog/catalog_service.rb",
+                    line = 27,
+                    column = 5,
+                )
+            ),
+        )
+
+        val materialized = SarfMapCompiler.compile(scene)
+        val cluster = materialized.entities.first { it.id == "catalog" }
+        val module = materialized.entities.first { it.id == "catalog-service" }
+
+        assertEquals("app/domain/catalog", cluster.meta.getValue("path").jsonPrimitive.content)
+        assertEquals(12, cluster.meta.getValue("line").jsonPrimitive.content.toInt())
+        assertEquals(3, cluster.meta.getValue("column").jsonPrimitive.content.toInt())
+        assertEquals("app/domain/catalog/catalog_service.rb", module.meta.getValue("path").jsonPrimitive.content)
+        assertEquals(27, module.meta.getValue("line").jsonPrimitive.content.toInt())
+        assertEquals(5, module.meta.getValue("column").jsonPrimitive.content.toInt())
     }
 }

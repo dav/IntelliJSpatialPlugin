@@ -7,23 +7,23 @@
     { "id": "infrastructure", "label": "Infrastructure", "color": "#6e9f6d" }
   ],
   "clusters": [
-    { "id": "catalog", "label": "Catalog", "levelId": "domain" },
-    { "id": "checkout", "label": "Checkout", "levelId": "domain" },
-    { "id": "catalog-ui", "label": "Catalog UI", "levelId": "experience", "parentId": "catalog" },
-    { "id": "checkout-ui", "label": "Checkout UI", "levelId": "experience", "parentId": "checkout" },
-    { "id": "catalog-storage", "label": "Catalog Storage", "levelId": "infrastructure", "parentId": "catalog" },
-    { "id": "payments-gateway", "label": "Payments Gateway", "levelId": "infrastructure", "parentId": "checkout" }
+    { "id": "catalog", "label": "Catalog", "levelId": "domain", "path": "app/domain/catalog/catalog_service.rb", "line": 1 },
+    { "id": "checkout", "label": "Checkout", "levelId": "domain", "path": "app/domain/checkout/cart_service.rb", "line": 1 },
+    { "id": "catalog-ui", "label": "Catalog UI", "levelId": "experience", "parentId": "catalog", "path": "app/ui/catalog/catalog_page.rb", "line": 1 },
+    { "id": "checkout-ui", "label": "Checkout UI", "levelId": "experience", "parentId": "checkout", "path": "app/ui/checkout/checkout_page.rb", "line": 1 },
+    { "id": "catalog-storage", "label": "Catalog Storage", "levelId": "infrastructure", "parentId": "catalog", "path": "app/storage/catalog/catalog_repository.rb", "line": 1 },
+    { "id": "payments-gateway", "label": "Payments Gateway", "levelId": "infrastructure", "parentId": "checkout", "path": "app/infrastructure/payments/payments_client.rb", "line": 1 }
   ],
   "modules": [
-    { "id": "catalog-page", "label": "CatalogPage", "clusterId": "catalog-ui", "kind": "box" },
-    { "id": "search-panel", "label": "SearchPanel", "clusterId": "catalog-ui" },
-    { "id": "catalog-service", "label": "CatalogService", "clusterId": "catalog" },
-    { "id": "pricing-engine", "label": "PricingEngine", "clusterId": "catalog" },
-    { "id": "catalog-repo", "label": "CatalogRepository", "clusterId": "catalog-storage", "kind": "cylinder" },
-    { "id": "checkout-page", "label": "CheckoutPage", "clusterId": "checkout-ui", "kind": "box" },
-    { "id": "cart-service", "label": "CartService", "clusterId": "checkout" },
-    { "id": "payment-service", "label": "PaymentService", "clusterId": "checkout" },
-    { "id": "payments-client", "label": "PaymentsClient", "clusterId": "payments-gateway", "kind": "cone" }
+    { "id": "catalog-page", "label": "CatalogPage", "clusterId": "catalog-ui", "kind": "box", "path": "app/ui/catalog/catalog_page.rb", "line": 12 },
+    { "id": "search-panel", "label": "SearchPanel", "clusterId": "catalog-ui", "path": "app/ui/catalog/search_panel.rb", "line": 3 },
+    { "id": "catalog-service", "label": "CatalogService", "clusterId": "catalog", "path": "app/domain/catalog/catalog_service.rb", "line": 5 },
+    { "id": "pricing-engine", "label": "PricingEngine", "clusterId": "catalog", "path": "app/domain/catalog/pricing_engine.rb", "line": 7 },
+    { "id": "catalog-repo", "label": "CatalogRepository", "clusterId": "catalog-storage", "kind": "cylinder", "path": "app/storage/catalog/catalog_repository.rb", "line": 4 },
+    { "id": "checkout-page", "label": "CheckoutPage", "clusterId": "checkout-ui", "kind": "box", "path": "app/ui/checkout/checkout_page.rb", "line": 9 },
+    { "id": "cart-service", "label": "CartService", "clusterId": "checkout", "path": "app/domain/checkout/cart_service.rb", "line": 6 },
+    { "id": "payment-service", "label": "PaymentService", "clusterId": "checkout", "path": "app/domain/checkout/payment_service.rb", "line": 8 },
+    { "id": "payments-client", "label": "PaymentsClient", "clusterId": "payments-gateway", "kind": "cone", "path": "app/infrastructure/payments/payments_client.rb", "line": 10 }
   ],
   "dependencies": [
     { "fromId": "catalog-page", "toId": "catalog-service", "label": "queries" },

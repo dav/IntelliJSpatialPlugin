@@ -25,6 +25,14 @@
             opacity: 0; transition: opacity 240ms ease-out; pointer-events: none;
         }
         #speech.visible { opacity: 1; }
+        #notice {
+            position: fixed; top: 62px; left: 50%; transform: translateX(-50%);
+            padding: 8px 12px; border-radius: 999px; background: rgba(30, 31, 34, 0.92);
+            border: 1px solid rgba(255,255,255,0.12); font-size: 12px; color: #d7dbe0;
+            opacity: 0; transition: opacity 180ms ease-out; pointer-events: none;
+            white-space: nowrap;
+        }
+        #notice.visible { opacity: 1; }
         #toolbar {
             position: fixed; top: 10px; right: 10px; display: flex; gap: 6px;
         }
@@ -56,8 +64,9 @@
         <button id="btn-recenter" title="Reset camera to default pose">Recenter</button>
     </div>
     <div id="speech"></div>
+    <div id="notice"></div>
     <div id="empty">Scene is empty. Ask the IDE AI agent to call a Spatial MCP tool.</div>
-    <div id="hud"><span id="hud-count">0</span> entities · drag to orbit · right-drag to pan · scroll to zoom</div>
+    <div id="hud"><span id="hud-count">0</span> entities · click to open · double-click to focus · drag to orbit · right-drag to pan · scroll to zoom</div>
     <div id="scrub">
         <span id="scrub-tip">◂ scrub time</span>
         <input id="scrub-range" type="range" min="0" max="0" step="1" value="0">

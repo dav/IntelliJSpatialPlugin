@@ -22,6 +22,7 @@ import dev.spatial.service.SceneService
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
+import kotlinx.serialization.decodeFromString
 
 /**
  * Wraps a single [JBCefBrowser] instance hosting the Three.js scene. Owns the
@@ -54,7 +55,17 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
 
         jsQuery.addHandler { payload ->
             thisLogger().debug("spatial bridge <- $payload")
-            null
+            val message = runCatching { SceneService.JSON.decodeFromString<SpatialBridgeMessage>(payload) }.getOrNull()
+            when (message?.type) {
+                SpatialSceneBridge.TYPE_OPEN_FILE -> {
+                    if (SpatialSceneBridge.openFile(project, message)) {
+                        JBCefJSQuery.Response(null as String?)
+                    } else {
+                        JBCefJSQuery.Response(null, 1, "Could not open file")
+                    }
+                }
+                else -> JBCefJSQuery.Response(null, 2, "Unsupported spatial bridge message")
+            }
         }
 
         browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {

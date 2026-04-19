@@ -12,6 +12,7 @@
   const hudCount = document.getElementById('hud-count');
   const emptyState = document.getElementById('empty');
   const speech = document.getElementById('speech');
+  const notice = document.getElementById('notice');
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1e1f22);
@@ -39,6 +40,11 @@
   const entityRoot = new THREE.Group();
   scene.add(entityRoot);
   const byId = new Map();
+  const raycaster = new THREE.Raycaster();
+  const pointerNdc = new THREE.Vector2();
+  const singleClickDelayMs = 300;
+  let pointerDown = null;
+  let singleClickTimer = null;
 
   const linkRoot = new THREE.Group();
   scene.add(linkRoot);
@@ -88,6 +94,7 @@
   const panUp = new THREE.Vector3();
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
   renderer.domElement.addEventListener('mousedown', (e) => {
+    pointerDown = { x: e.clientX, y: e.clientY, button: e.button, moved: false };
     // Right-drag, middle-drag, or shift+left-drag pans; plain left-drag orbits.
     if (e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey)) {
       dragMode = 'pan';
@@ -100,11 +107,23 @@
     lastY = e.clientY;
     e.preventDefault();
   });
-  window.addEventListener('mouseup', () => { dragMode = null; });
+  window.addEventListener('mouseup', (e) => {
+    const shouldHandleClick = pointerDown
+      && pointerDown.button === 0
+      && !pointerDown.moved
+      && e.clientX != null
+      && e.clientY != null;
+    dragMode = null;
+    if (shouldHandleClick) scheduleSingleClickAtClientPoint(e.clientX, e.clientY);
+    pointerDown = null;
+  });
   window.addEventListener('mousemove', (e) => {
     if (!dragMode) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
+    if (pointerDown && Math.hypot(e.clientX - pointerDown.x, e.clientY - pointerDown.y) > 4) {
+      pointerDown.moved = true;
+    }
     lastX = e.clientX; lastY = e.clientY;
     if (dragMode === 'orbit') {
       spherical.theta -= dx / 200;
@@ -120,6 +139,15 @@
       target.add(offset);
       updateCamera();
     }
+  });
+  renderer.domElement.addEventListener('mousemove', (e) => {
+    if (dragMode) return;
+    renderer.domElement.style.cursor = pickSpatialObjectAtClientPoint(e.clientX, e.clientY) ? 'pointer' : 'default';
+  });
+  renderer.domElement.addEventListener('dblclick', (e) => {
+    if (e.button !== 0) return;
+    cancelPendingSingleClick();
+    focusAtClientPoint(e.clientX, e.clientY);
   });
   renderer.domElement.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -168,7 +196,127 @@
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.spatialId = entity.id;
     mesh.userData.baseColor = new THREE.Color(entity.color || '#9aa0a6');
+    mesh.userData.spatialMeta = entity.meta || {};
     return mesh;
+  }
+
+  function openPathFromMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    return meta.path || meta.filePath || meta.spatialPath || null;
+  }
+
+  function openLineFromMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    const value = Number(meta.line);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function openColumnFromMeta(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    const value = Number(meta.column);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function updateOpenBinding(mesh, entity) {
+    const meta = entity.meta || {};
+    mesh.userData.spatialMeta = meta;
+    mesh.userData.spatialPath = openPathFromMeta(meta);
+    mesh.userData.spatialLine = openLineFromMeta(meta);
+    mesh.userData.spatialColumn = openColumnFromMeta(meta);
+  }
+
+  function findSpatialObject(obj) {
+    let cursor = obj;
+    while (cursor) {
+      if (cursor.userData && (cursor.userData.spatialId || cursor.userData.spatialPath)) return cursor;
+      cursor = cursor.parent || null;
+    }
+    return null;
+  }
+
+  function sendOpenRequest(target) {
+    if (!target || !target.userData || !target.userData.spatialPath) return false;
+    if (typeof window.__spatialSend !== 'function') return false;
+    const payload = {
+      type: 'open-file',
+      entityId: target.userData.spatialId || null,
+      path: target.userData.spatialPath,
+      line: target.userData.spatialLine || null,
+      column: target.userData.spatialColumn || null,
+    };
+    window.__spatialSend(JSON.stringify(payload));
+    return true;
+  }
+
+  function pickSpatialObjectAtClientPoint(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointerNdc, camera);
+    const hits = raycaster.intersectObjects([...entityRoot.children, ...landscapeRoot.children], true);
+    for (const hit of hits) {
+      const spatial = findSpatialObject(hit.object);
+      if (spatial) return spatial;
+    }
+    return null;
+  }
+
+  function cancelPendingSingleClick() {
+    if (!singleClickTimer) return;
+    clearTimeout(singleClickTimer);
+    singleClickTimer = null;
+  }
+
+  function showNotice(text, durationMs) {
+    if (!notice) return;
+    notice.textContent = text || '';
+    notice.classList.add('visible');
+    if (notice.hideTimer) clearTimeout(notice.hideTimer);
+    notice.hideTimer = setTimeout(() => {
+      notice.classList.remove('visible');
+    }, durationMs != null ? durationMs : 1400);
+  }
+
+  function focusObject(target, durationMs) {
+    if (!target) return Promise.resolve(false);
+    const focusTarget = target.userData && target.userData.spatialFocusObject
+      ? target.userData.spatialFocusObject
+      : target;
+    const box = new THREE.Box3().setFromObject(focusTarget);
+    if (box.isEmpty()) {
+      const worldPos = new THREE.Vector3();
+      focusTarget.getWorldPosition(worldPos);
+      return easeCamera(worldPos, 4, null, null, durationMs != null ? durationMs : 450);
+    }
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const distance = Math.max(3.5, sphere.radius * 3.2);
+    return easeCamera(sphere.center.clone(), distance, null, null, durationMs != null ? durationMs : 450);
+  }
+
+  function handleSingleClickAtClientPoint(clientX, clientY) {
+    const target = pickSpatialObjectAtClientPoint(clientX, clientY);
+    if (!target) return;
+    if (target.userData && target.userData.spatialPath) {
+      sendOpenRequest(target);
+      return;
+    }
+    showNotice('No associated path');
+  }
+
+  function scheduleSingleClickAtClientPoint(clientX, clientY) {
+    cancelPendingSingleClick();
+    singleClickTimer = setTimeout(() => {
+      singleClickTimer = null;
+      handleSingleClickAtClientPoint(clientX, clientY);
+    }, singleClickDelayMs);
+  }
+
+  function focusAtClientPoint(clientX, clientY) {
+    const target = pickSpatialObjectAtClientPoint(clientX, clientY);
+    if (!target) return;
+    focusObject(target, 450);
   }
 
   function makeLabelSprite(text) {
@@ -249,6 +397,7 @@
         mesh.material.opacity = entity.opacity ?? 1;
         mesh.material.transparent = (entity.opacity ?? 1) < 1;
       }
+      updateOpenBinding(mesh, entity);
       applyTransform(mesh, entity);
       syncLabel(mesh, entity);
     });
@@ -678,6 +827,8 @@
       labelSprite.position.set(mesh.position.x, 0, mesh.position.z);
       labelSprite.scale.set(1.4, 0.35, 1);
       labelSprite.visible = false;
+      labelSprite.userData.spatialPath = path;
+      labelSprite.userData.spatialFocusObject = mesh;
       landscapeRoot.add(labelSprite);
 
       landscapeCells.set(path, {
