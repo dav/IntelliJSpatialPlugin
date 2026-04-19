@@ -1,5 +1,6 @@
 # Spatial — 3D scene tool window for JetBrains IDEs
 
+<!-- Plugin description -->
 Spatial is an open-source plugin that adds a 3D visualization tool window
 to [JetBrains](https://www.jetbrains.com) IDEs exposed as an MCP skill. Agents
 are given commands tailored to push raw geometry, 
@@ -9,6 +10,7 @@ project-structure scenes, feed-forward neural networks  ...really anything
 that the agents can come up with, and then walk you through the constructed scene
 using camera moves and narration; so project structure, call graphs, dependency
 trees, and other codebase artifacts can be visual instead of merely textual. 
+<!-- Plugin description end -->
 
 The plugin renders them with [Three.js](https://threejs.org) inside a 
 [JCEF](https://github.com/chromiumembedded/java-cef) browser so the user sees the project
@@ -256,6 +258,44 @@ Requires JDK 21+ and a JetBrains Runtime that includes JCEF.
 ./gradlew test           # runs the scene-service unit tests
 ./install.sh             # build, install into the real IDE, relaunch
 ```
+
+## Publishing ZIP releases on GitHub
+
+The simplest distribution path for this plugin is a GitHub Release with the
+built plugin ZIP attached.
+
+Recommended local publish flow:
+
+1. Bump `version` in [`gradle.properties`](gradle.properties).
+2. Commit and push that change.
+3. Run:
+   ```bash
+   ./publish-github-release.sh
+   ```
+
+That script builds `build/distributions/*.zip` locally and creates or updates a
+GitHub Release named `v<version>` with the ZIP attached.
+
+It does not bump the version for you. It reads the version you have already set
+in `gradle.properties`.
+
+Optional flags:
+
+- `./publish-github-release.sh --skip-build`
+- `./publish-github-release.sh --notes-file RELEASE_NOTES.md`
+  When you use `RELEASE_NOTES.md`, the script replaces `<version>` in that file
+  with the current `gradle.properties` version before publishing.
+
+Users can then download the ZIP from GitHub Releases and install it in the IDE:
+
+- `Settings/Preferences > Plugins > gear icon > Install Plugin from Disk...`
+
+There is also a tag-driven GitHub Actions workflow in
+[`/.github/workflows/release.yml`](.github/workflows/release.yml), but the
+local script is the most reliable path while the project still depends on the
+bundled MCP plugin from the target IDE.
+
+A starter template is available at [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 
 ## Running locally against the IDE agent
 
