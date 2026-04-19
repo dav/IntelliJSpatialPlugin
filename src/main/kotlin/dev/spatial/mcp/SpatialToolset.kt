@@ -23,6 +23,7 @@ import dev.spatial.scene.TourRequest
 import dev.spatial.scene.TourStop
 import dev.spatial.project.ProjectStructureMapBuilder
 import dev.spatial.service.SceneService
+import dev.spatial.service.SpatialRemoteServer
 import dev.spatial.sarf.SarfMapCompiler
 import dev.spatial.sarf.SarfMapScene
 import java.nio.file.Path
@@ -485,6 +486,65 @@ class SpatialToolset : McpToolset {
         )
     }
 
+    @McpTool(name = "spatial_get_remote_url")
+    @McpDescription(
+        "Return shareable URLs for the Spatial remote web renderer. Open one of these URLs in a browser " +
+            "on another device to mirror the current scene outside the IDE. Results include interface-labeled " +
+            "HTTP and HTTPS URLs plus a certificate download URL for trusting the local self-signed TLS cert " +
+            "on another device when testing WebXR."
+    )
+    suspend fun spatial_get_remote_url(
+        @McpDescription(
+            "Optional world scale to encode into the returned remote URLs as `?scale=`. " +
+                "This does not change the active remote session unless `spatial_set_remote_view` is called."
+        )
+        worldScale: Double? = null,
+        @McpDescription(
+            "Optional immersive entry depth multiplier to encode into the returned remote URLs as `?depth=`. " +
+                "Larger values place the scene farther away when entering immersive WebXR."
+        )
+        immersiveEntryDepthMultiplier: Double? = null,
+    ): RemoteUrlResult {
+        val project = currentCoroutineContext().project
+        val server = project.service<SpatialRemoteServer>()
+        val entries = server.remoteUrls(
+            worldScale = worldScale,
+            immersiveEntryDepthMultiplier = immersiveEntryDepthMultiplier,
+        )
+        return RemoteUrlResult(
+            primaryUrl = entries.firstOrNull()?.httpUrl ?: error("No remote URL available."),
+            urls = entries.map { it.httpUrl },
+            httpsUrls = entries.map { it.httpsUrl },
+            certificateUrls = entries.map { it.certificateUrl }.distinct(),
+            entries = entries,
+            remoteView = server.remoteViewSettings(),
+        )
+    }
+
+    @McpTool(name = "spatial_set_remote_view")
+    @McpDescription(
+        "Update live remote-view settings for the Spatial web renderer. Connected remote browsers, including " +
+            "an active Vision Pro immersive session, will receive the change immediately without reloading."
+    )
+    suspend fun spatial_set_remote_view(
+        @McpDescription("Global world scale for remote browsers. 0.1 makes the scene one tenth of its authored size.")
+        worldScale: Double? = null,
+        @McpDescription(
+            "Immersive entry depth multiplier for remote browsers. `10` places the scene much farther away on WebXR entry."
+        )
+        immersiveEntryDepthMultiplier: Double? = null,
+    ): RemoteViewResult {
+        val project = currentCoroutineContext().project
+        val remoteView = project.service<SpatialRemoteServer>().updateRemoteViewSettings(
+            worldScale = worldScale,
+            immersiveEntryDepthMultiplier = immersiveEntryDepthMultiplier,
+        )
+        return RemoteViewResult(
+            worldScale = remoteView.worldScale,
+            immersiveEntryDepthMultiplier = remoteView.immersiveEntryDepthMultiplier,
+        )
+    }
+
     private fun parseIsoOrNull(s: String?): OffsetDateTime? {
         val v = s?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return runCatching { OffsetDateTime.parse(v) }
@@ -500,6 +560,22 @@ class SpatialToolset : McpToolset {
         val files: Int,
         val firstFrameLabel: String? = null,
         val lastFrameLabel: String? = null,
+    )
+
+    @Serializable
+    data class RemoteUrlResult(
+        val primaryUrl: String,
+        val urls: List<String>,
+        val httpsUrls: List<String>,
+        val certificateUrls: List<String>,
+        val entries: List<SpatialRemoteServer.RemoteUrlEntry>,
+        val remoteView: SpatialRemoteServer.RemoteViewSettings,
+    )
+
+    @Serializable
+    data class RemoteViewResult(
+        val worldScale: Double,
+        val immersiveEntryDepthMultiplier: Double,
     )
 
     @Serializable

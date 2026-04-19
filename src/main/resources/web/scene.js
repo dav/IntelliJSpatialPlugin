@@ -8,6 +8,7 @@
  * executeJavaScript. Add new entity kinds inside `createMesh`.
  */
 (function () {
+  const runtimeConfig = window.__spatialConfig || {};
   const stage = document.getElementById('stage');
   const hudCount = document.getElementById('hud-count');
   const emptyState = document.getElementById('empty');
@@ -21,6 +22,8 @@
   const controlsForward = document.getElementById('controls-forward');
   const controlsBackward = document.getElementById('controls-backward');
   const controlsClose = document.getElementById('controls-close');
+  const immersiveButton = document.getElementById('btn-immersive');
+  const connectionStatus = document.getElementById('connection-status');
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1e1f22);
@@ -30,6 +33,7 @@
   camera.lookAt(0, 0, 0);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.xr.enabled = true;
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.domElement.style.display = 'block';
   renderer.domElement.style.width = '100%';
@@ -43,14 +47,18 @@
 
   const grid = new THREE.GridHelper(40, 40, 0x3a3d42, 0x2a2d32);
   grid.position.y = -0.01;
-  scene.add(grid);
+  const xrRoot = new THREE.Group();
+  scene.add(xrRoot);
+  const worldRoot = new THREE.Group();
+  xrRoot.add(worldRoot);
+  worldRoot.add(grid);
 
   const entityRoot = new THREE.Group();
-  scene.add(entityRoot);
+  worldRoot.add(entityRoot);
   const labelRoot = new THREE.Group();
-  scene.add(labelRoot);
+  worldRoot.add(labelRoot);
   const interactionRoot = new THREE.Group();
-  scene.add(interactionRoot);
+  worldRoot.add(interactionRoot);
   const byId = new Map();
   const entityDefs = new Map();
   const raycaster = new THREE.Raycaster();
@@ -60,12 +68,12 @@
   let singleClickTimer = null;
 
   const linkRoot = new THREE.Group();
-  scene.add(linkRoot);
+  worldRoot.add(linkRoot);
   const linkDefs = new Map();    // id → raw link def {id, fromId, toId, color, label, arrow, opacity}
   const linkObjects = new Map(); // id → Object3D currently in linkRoot
 
   const landscapeRoot = new THREE.Group();
-  scene.add(landscapeRoot);
+  worldRoot.add(landscapeRoot);
   // Per-cell state for the active landscape, keyed by file path.
   const landscapeCells = new Map(); // path → { mesh, baseColor, heights:[], colors:[], currentHeight }
   let landscapeTimeline = null;
@@ -81,6 +89,100 @@
   const valueStateById = new Map();
   let selectedControlId = null;
   const interactionLines = new Map();
+
+  function parseScaleValue(rawValue, fallbackValue) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallbackValue;
+    return Math.max(0.01, Math.min(100, parsed));
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  let worldScale = parseScaleValue(urlParams.get('scale'), parseScaleValue(runtimeConfig.worldScale, 1));
+  let immersiveEntryDepthMultiplier = parseScaleValue(
+    urlParams.get('depth') || urlParams.get('entryDepth') || urlParams.get('entryDepthMultiplier'),
+    parseScaleValue(runtimeConfig.immersiveEntryDepthMultiplier, 1),
+  );
+  worldRoot.scale.setScalar(worldScale);
+
+  function localPointToWorld(point) {
+    return worldRoot.localToWorld(point.clone());
+  }
+
+  function worldPointToLocal(point) {
+    return worldRoot.worldToLocal(point.clone());
+  }
+
+  function worldDistanceToLocal(distance) {
+    return worldScale === 0 ? distance : distance / worldScale;
+  }
+
+  function setWorldScale(nextScale) {
+    const resolved = parseScaleValue(nextScale, worldScale);
+    if (resolved === worldScale) return;
+    worldScale = resolved;
+    worldRoot.scale.setScalar(worldScale);
+    rebuildAllLinks();
+    if (interactionConfig) recomputeInteractiveBindings();
+  }
+
+  function setImmersiveEntryDepthMultiplier(nextMultiplier) {
+    const resolved = parseScaleValue(nextMultiplier, immersiveEntryDepthMultiplier);
+    if (resolved === immersiveEntryDepthMultiplier) return;
+    immersiveEntryDepthMultiplier = resolved;
+    if (isImmersivePresenting()) {
+      placeSceneInFrontForImmersiveStart();
+    }
+  }
+
+  function isImmersivePresenting() {
+    return !!immersiveSession && !!renderer.xr && renderer.xr.isPresenting;
+  }
+
+  function currentXrCamera() {
+    return isImmersivePresenting() ? renderer.xr.getCamera(camera) : null;
+  }
+
+  function resetXrRig() {
+    xrRoot.position.set(0, 0, 0);
+    xrRoot.quaternion.identity();
+  }
+
+  function authoredDistanceToImmersive(distance, fallbackDistance) {
+    const authoredDistance = Number.isFinite(distance) ? distance : fallbackDistance;
+    return Math.max(0.35, Math.abs(authoredDistance) * worldScale);
+  }
+
+  function immersiveViewerPosition() {
+    const xrCamera = currentXrCamera();
+    return xrCamera
+      ? xrCamera.getWorldPosition(new THREE.Vector3())
+      : camera.getWorldPosition(new THREE.Vector3());
+  }
+
+  function immersiveForwardVector() {
+    const xrCamera = currentXrCamera();
+    const forward = xrCamera
+      ? xrCamera.getWorldDirection(new THREE.Vector3())
+      : camera.getWorldDirection(new THREE.Vector3());
+    const planarLength = Math.hypot(forward.x, forward.z);
+    if (planarLength > 1e-4) {
+      forward.y = 0;
+      forward.normalize();
+      return forward;
+    }
+    return new THREE.Vector3(0, 0, -1);
+  }
+
+  function desiredImmersiveTargetPosition(targetWorld, distanceMeters) {
+    const viewer = immersiveViewerPosition();
+    const forward = immersiveForwardVector();
+    const desired = viewer.clone().addScaledVector(forward, Math.max(0.35, distanceMeters));
+    desired.y = Math.max(0.2, viewer.y - 0.3);
+    if (targetWorld && Number.isFinite(targetWorld.y)) {
+      desired.y = Math.min(desired.y, Math.max(0.1, targetWorld.y + 0.25));
+    }
+    return desired;
+  }
 
   function resize() {
     const w = stage.clientWidth || window.innerWidth;
@@ -110,6 +212,8 @@
   let dragMode = null; // 'orbit' | 'pan' | null
   let lastX = 0;
   let lastY = 0;
+  let suppressInteractionDispatch = false;
+  let immersiveSession = null;
   const panRight = new THREE.Vector3();
   const panUp = new THREE.Vector3();
   renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -181,11 +285,10 @@
     camera.lookAt(target);
   }
 
-  function animate() {
-    requestAnimationFrame(animate);
+  function renderFrame() {
     renderer.render(scene, camera);
   }
-  animate();
+  renderer.setAnimationLoop(renderFrame);
 
   function createMesh(entity) {
     let geometry;
@@ -320,6 +423,7 @@
   }
 
   function sendInteractionState() {
+    if (suppressInteractionDispatch) return;
     if (typeof window.__spatialSend !== 'function') return;
     window.__spatialSend(JSON.stringify({
       type: 'interaction-state',
@@ -400,10 +504,16 @@
     if (box.isEmpty()) {
       const worldPos = new THREE.Vector3();
       focusTarget.getWorldPosition(worldPos);
+      if (isImmersivePresenting()) {
+        return easeImmersiveFocus(worldPos, authoredDistanceToImmersive(4, 4), durationMs != null ? durationMs : 450);
+      }
       return easeCamera(worldPos, 4, null, null, durationMs != null ? durationMs : 450);
     }
     const sphere = new THREE.Sphere();
     box.getBoundingSphere(sphere);
+    if (isImmersivePresenting()) {
+      return easeImmersiveFocus(sphere.center.clone(), Math.max(0.45, sphere.radius * 3.2), durationMs != null ? durationMs : 450);
+    }
     const distance = Math.max(3.5, sphere.radius * 3.2);
     return easeCamera(sphere.center.clone(), distance, null, null, durationMs != null ? durationMs : 450);
   }
@@ -818,30 +928,108 @@
     });
   }
 
+  function easeImmersiveFocus(endTargetWorld, distanceMeters, duration) {
+    const myToken = ++cameraAnimationToken;
+    const startRootPosition = xrRoot.position.clone();
+    const desiredTargetWorld = desiredImmersiveTargetPosition(endTargetWorld, distanceMeters);
+    const endRootPosition = startRootPosition.clone().add(desiredTargetWorld.sub(endTargetWorld));
+    const dur = Math.max(0, duration);
+    const startTime = performance.now();
+
+    return new Promise((resolve) => {
+      function step(now) {
+        if (myToken !== cameraAnimationToken) {
+          resolve(false);
+          return;
+        }
+        const progress = dur === 0 ? 1 : Math.min(1, (now - startTime) / dur);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        xrRoot.position.lerpVectors(startRootPosition, endRootPosition, eased);
+        if (progress < 1) {
+          requestAnimationFrame(step);
+        } else {
+          resolve(true);
+        }
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
   function focus(payload) {
     const t = payload && payload.target ? payload.target : { x: 0, y: 0, z: 0 };
     const distance = payload && payload.distance ? payload.distance : 5;
     const duration = payload && payload.durationMs != null ? payload.durationMs : 600;
+    if (isImmersivePresenting()) {
+      return easeImmersiveFocus(
+        new THREE.Vector3(t.x || 0, t.y || 0, t.z || 0),
+        authoredDistanceToImmersive(distance, 5),
+        duration,
+      );
+    }
     easeCamera(new THREE.Vector3(t.x || 0, t.y || 0, t.z || 0), distance, null, null, duration);
   }
 
   function recenter() {
+    if (isImmersivePresenting()) {
+      ++cameraAnimationToken;
+      resetXrRig();
+      return;
+    }
     easeCamera(defaultPose.target.clone(), defaultPose.radius, defaultPose.theta, defaultPose.phi, 500);
   }
 
-  function fit() {
+  function sceneBounds() {
     if (byId.size === 0 && landscapeCells.size === 0 && labelRoot.children.length === 0) {
-      recenter();
-      return;
+      return null;
     }
     const box = new THREE.Box3();
     if (byId.size) box.union(new THREE.Box3().setFromObject(entityRoot));
     if (labelRoot.children.length) box.union(new THREE.Box3().setFromObject(labelRoot));
     if (interactionRoot.children.length) box.union(new THREE.Box3().setFromObject(interactionRoot));
     if (landscapeCells.size) box.union(new THREE.Box3().setFromObject(landscapeRoot));
-    if (box.isEmpty()) { recenter(); return; }
+    return box.isEmpty() ? null : box;
+  }
+
+  function placeSceneInFrontForImmersiveStart() {
+    const box = sceneBounds();
+    if (!box) {
+      resetXrRig();
+      return false;
+    }
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3()).multiplyScalar(worldScale);
+    const scaledWidth = Math.max(0.01, size.x);
+    const scaledHeight = Math.max(0.01, size.y);
+    const scaledDepth = Math.max(0.01, size.z);
+    const frontClearance = THREE.MathUtils.clamp(
+      0.45 + Math.max(scaledWidth, scaledHeight) * 0.12,
+      0.45,
+      0.85,
+    );
+    const depthStandOff = scaledDepth * immersiveEntryDepthMultiplier;
+    const entryDistance = Math.max(
+      0.7,
+      frontClearance + depthStandOff,
+      scaledWidth * 0.75,
+      scaledHeight * 0.95,
+    );
+    const desiredTargetWorld = desiredImmersiveTargetPosition(center, entryDistance);
+    xrRoot.position.copy(desiredTargetWorld.sub(center));
+    return true;
+  }
+
+  function fit() {
+    const box = sceneBounds();
+    if (!box) {
+      recenter();
+      return;
+    }
     const sphere = new THREE.Sphere();
     box.getBoundingSphere(sphere);
+    if (isImmersivePresenting()) {
+      easeImmersiveFocus(sphere.center.clone(), Math.max(0.5, sphere.radius * 2.6), 500);
+      return;
+    }
     const fovRad = (camera.fov * Math.PI) / 180;
     const aspect = camera.aspect || 1;
     const fitVert = sphere.radius / Math.sin(fovRad / 2);
@@ -948,6 +1136,7 @@
       if (!control || !state) return;
       const originY = ((entityDefs.get(control.entityId)?.position || {}).y || 0) + 0.18;
       const origin = new THREE.Vector3(state.x, originY, state.z);
+      const originWorld = localPointToWorld(origin);
       const wallMeshes = (binding.wallEntityIds || [])
         .map((entityId) => byId.get(entityId))
         .filter(Boolean);
@@ -957,16 +1146,17 @@
           0,
           Math.sin(THREE.MathUtils.degToRad(state.headingDeg + angleDeg)),
         ).normalize();
-        const sensorRay = new THREE.Raycaster(origin, direction, 0, binding.maxDistance || 10);
+        const maxDistance = binding.maxDistance || 10;
+        const sensorRay = new THREE.Raycaster(originWorld, direction, 0, maxDistance * worldScale);
         const hits = sensorRay.intersectObjects(wallMeshes, true);
         const hit = hits.find((candidate) => candidate.distance >= 0);
-        const distance = hit ? hit.distance : (binding.maxDistance || 10);
+        const distance = hit ? worldDistanceToLocal(hit.distance) : maxDistance;
         const valueMode = (binding.valueMode || 'proximity').toLowerCase();
-        const normalizedDistance = Math.max(0, Math.min(1, distance / Math.max(binding.maxDistance || 1, 0.001)));
+        const normalizedDistance = Math.max(0, Math.min(1, distance / Math.max(maxDistance, 0.001)));
         const value = valueMode === 'distance' ? normalizedDistance : 1 - normalizedDistance;
         const end = hit
-          ? hit.point.clone()
-          : origin.clone().addScaledVector(direction, binding.maxDistance || 10);
+          ? worldPointToLocal(hit.point)
+          : origin.clone().addScaledVector(direction, maxDistance);
         addOrUpdateInteractionLine(`ray:${binding.id}:${index}`, origin, end, hit ? binding.lineColor : binding.missColor);
         valueStateById.set(`ray:${binding.id}:${index}`, value);
         const nodeId = (binding.valueNodeEntityIds || [])[index];
@@ -1022,6 +1212,33 @@
     sendInteractionState();
   }
 
+  function setInteractionState(payload) {
+    if (!payload) return;
+    suppressInteractionDispatch = true;
+    try {
+      const remoteControlStates = Array.isArray(payload.controls) ? payload.controls : [];
+      remoteControlStates.forEach((state) => {
+        if (!state || !controlDefs.has(state.id)) return;
+        const control = controlDefs.get(state.id);
+        controlStateById.set(state.id, clampControlState(control, {
+          id: state.id,
+          entityId: state.entityId || control.entityId,
+          x: Number(state.x) || 0,
+          z: Number(state.z) || 0,
+          headingDeg: Number(state.headingDeg) || 0,
+        }));
+      });
+      applyAllControlPoses();
+      recomputeInteractiveBindings();
+      selectedControlId = payload.selectedControlId && controlDefs.has(payload.selectedControlId)
+        ? payload.selectedControlId
+        : null;
+      updateControlPanel();
+    } finally {
+      suppressInteractionDispatch = false;
+    }
+  }
+
   function clearInteractions() {
     interactionConfig = null;
     controlDefs.clear();
@@ -1034,6 +1251,69 @@
     sendInteractionState();
   }
 
+  function setConnectionStatus(text, kind) {
+    if (!connectionStatus) return;
+    if (!text) {
+      connectionStatus.textContent = '';
+      connectionStatus.classList.remove('visible');
+      connectionStatus.style.color = '';
+      return;
+    }
+    connectionStatus.textContent = text;
+    connectionStatus.classList.add('visible');
+    connectionStatus.style.color = kind === 'error'
+      ? '#ffb4ab'
+      : kind === 'warn'
+        ? '#f6d28b'
+        : '#b7f0c1';
+  }
+
+  async function refreshImmersiveButton() {
+    if (!immersiveButton) return;
+    if (!window.isSecureContext || !navigator.xr) {
+      immersiveButton.classList.add('hidden');
+      return;
+    }
+    let supported = false;
+    try {
+      supported = await navigator.xr.isSessionSupported('immersive-vr');
+    } catch (_error) {
+      supported = false;
+    }
+    immersiveButton.classList.toggle('hidden', !supported);
+    immersiveButton.textContent = immersiveSession ? 'Exit Immersive' : 'Enter Immersive';
+  }
+
+  async function enterImmersive() {
+    if (!window.isSecureContext || !navigator.xr) {
+      setConnectionStatus('WebXR needs HTTPS or localhost', 'warn');
+      return false;
+    }
+    if (immersiveSession) {
+      await immersiveSession.end();
+      return true;
+    }
+    try {
+      const session = await navigator.xr.requestSession('immersive-vr', {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+      });
+      immersiveSession = session;
+      session.addEventListener('end', () => {
+        immersiveSession = null;
+        resetXrRig();
+        refreshImmersiveButton();
+      });
+      await renderer.xr.setSession(session);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      placeSceneInFrontForImmersiveStart();
+      await refreshImmersiveButton();
+      return true;
+    } catch (error) {
+      setConnectionStatus(`WebXR failed: ${error && error.message ? error.message : 'unknown error'}`, 'error');
+      return false;
+    }
+  }
+
   document.getElementById('btn-recenter').addEventListener('click', recenter);
   document.getElementById('btn-fit').addEventListener('click', fit);
   controlsTurnLeft.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'turn-left'));
@@ -1041,6 +1321,8 @@
   controlsForward.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'forward'));
   controlsBackward.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'backward'));
   controlsClose.addEventListener('click', () => selectControl(null));
+  if (immersiveButton) immersiveButton.addEventListener('click', () => { enterImmersive(); });
+  refreshImmersiveButton();
 
   let speechTimer = null;
   function showCaption(text) {
@@ -1133,6 +1415,13 @@
     if (!mesh) return Promise.resolve(false);
     const worldPos = new THREE.Vector3();
     mesh.getWorldPosition(worldPos);
+    if (isImmersivePresenting()) {
+      return easeImmersiveFocus(
+        worldPos,
+        authoredDistanceToImmersive(payload && payload.distance, 4),
+        payload.durationMs != null ? payload.durationMs : 600,
+      );
+    }
     return easeCamera(worldPos, payload.distance || 4, null, null, payload.durationMs != null ? payload.durationMs : 600);
   }
 
@@ -1483,8 +1772,8 @@
     const fromMesh = byId.get(def.fromId);
     const toMesh = byId.get(def.toId);
     if (!fromMesh || !toMesh) return null;
-    const a = new THREE.Vector3(); fromMesh.getWorldPosition(a);
-    const b = new THREE.Vector3(); toMesh.getWorldPosition(b);
+    const a = worldPointToLocal(fromMesh.getWorldPosition(new THREE.Vector3()));
+    const b = worldPointToLocal(toMesh.getWorldPosition(new THREE.Vector3()));
     if (a.distanceTo(b) < 1e-4) return null;
 
     const group = new THREE.Group();
@@ -1572,7 +1861,8 @@
   window.Spatial = {
     setScene, focus, focusEntity, speak, narrate, highlight, playTour, recenter, fit,
     setLandscape, clearLandscape,
-    setInteractions, clearInteractions,
+    setInteractions, setInteractionState, clearInteractions,
     setLinks, clearLinks,
+    setConnectionStatus, enterImmersive, setWorldScale, setImmersiveEntryDepthMultiplier,
   };
 })();

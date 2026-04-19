@@ -55,6 +55,7 @@
         #controls-grid .spacer { width: 100%; height: 100%; }
         #toolbar {
             position: fixed; top: 10px; right: 10px; display: flex; gap: 6px;
+            align-items: center;
         }
         #toolbar button {
             background: rgba(40, 42, 46, 0.85); color: #cdd0d4;
@@ -64,6 +65,17 @@
         }
         #toolbar button:hover { background: rgba(60, 63, 70, 0.95); }
         #toolbar button:active { background: rgba(30, 31, 34, 0.95); }
+        #btn-immersive.hidden { display: none; }
+        #connection-status {
+            display: none;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: rgba(21, 24, 28, 0.82);
+            border: 1px solid rgba(255,255,255,0.12);
+            font-size: 11px;
+            letter-spacing: 0.01em;
+        }
+        #connection-status.visible { display: inline-flex; }
         #scrub {
             position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%);
             display: none; align-items: center; gap: 10px;
@@ -80,6 +92,8 @@
 <body>
     <div id="stage"></div>
     <div id="toolbar">
+        <span id="connection-status" aria-live="polite"></span>
+        <button id="btn-immersive" class="hidden" title="Enter immersive WebXR mode">Enter Immersive</button>
         <button id="btn-fit" title="Frame all entities">Fit</button>
         <button id="btn-recenter" title="Reset camera to default pose">Recenter</button>
     </div>
@@ -107,10 +121,11 @@
     </div>
 
     <script>
-      // Bridge back to Kotlin. Populated by the plugin so scene.js can send events.
-      window.__spatialSend = function (payload) { /*__SPATIAL_BRIDGE_INJECTION__*/ };
+      /*__SPATIAL_RUNTIME_INJECTION__*/
+      window.__spatialSend = window.__spatialSend || function () { return null; };
     </script>
     <script>/*__SPATIAL_THREE_INJECTION__*/</script>
     <script>/*__SPATIAL_SCENE_INJECTION__*/</script>
+    <script>/*__SPATIAL_REMOTE_INJECTION__*/</script>
 </body>
 </html>

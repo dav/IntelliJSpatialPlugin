@@ -37,6 +37,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         fun onLandscape(timeline: LandscapeTimeline?) {}
         fun onLinksChanged(links: List<Link>) {}
         fun onInteractionConfig(config: InteractionConfig?) {}
+        fun onInteractionStateChanged(state: InteractionState) {}
     }
 
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -67,6 +68,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         landscape?.let(listener::onLandscape)
         if (links.isNotEmpty()) listener.onLinksChanged(links)
         interactionConfig?.let(listener::onInteractionConfig)
+        listener.onInteractionStateChanged(interactionState)
     }
 
     fun removeListener(listener: Listener) {
@@ -153,6 +155,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
 
     fun updateInteractionState(state: InteractionState) {
         interactionState = state
+        listeners.forEach { it.onInteractionStateChanged(state) }
     }
 
     companion object {

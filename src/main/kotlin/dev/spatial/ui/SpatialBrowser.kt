@@ -13,6 +13,7 @@ import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
 import dev.spatial.scene.InteractionConfig
+import dev.spatial.scene.InteractionState
 import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.LinkSet
@@ -84,9 +85,13 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         }, browser.cefBrowser)
 
         val html = loadResource("/web/index.html")
-            .replace("/*__SPATIAL_BRIDGE_INJECTION__*/", jsQuery.inject("payload"))
+            .replace(
+                "/*__SPATIAL_RUNTIME_INJECTION__*/",
+                "window.__spatialConfig = { transport: 'jcef' }; window.__spatialSend = function (payload) { ${jsQuery.inject("payload")} };",
+            )
             .replace("/*__SPATIAL_THREE_INJECTION__*/", loadResource("/web/three.min.js"))
             .replace("/*__SPATIAL_SCENE_INJECTION__*/", loadResource("/web/scene.js"))
+            .replace("/*__SPATIAL_REMOTE_INJECTION__*/", "")
 
         browser.loadHTML(html)
         sceneService.addListener(this)
@@ -143,6 +148,10 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         } else {
             runInBrowser("window.Spatial.setInteractions(${SceneService.encode(config)})")
         }
+    }
+
+    override fun onInteractionStateChanged(state: InteractionState) {
+        runInBrowser("window.Spatial.setInteractionState(${SceneService.encode(state)})")
     }
 
     override fun dispose() {
