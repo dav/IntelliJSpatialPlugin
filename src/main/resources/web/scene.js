@@ -40,6 +40,11 @@
   scene.add(entityRoot);
   const byId = new Map();
 
+  const linkRoot = new THREE.Group();
+  scene.add(linkRoot);
+  const linkDefs = new Map();    // id → raw link def {id, fromId, toId, color, label, arrow, opacity}
+  const linkObjects = new Map(); // id → Object3D currently in linkRoot
+
   const landscapeRoot = new THREE.Group();
   scene.add(landscapeRoot);
   // Per-cell state for the active landscape, keyed by file path.
@@ -260,11 +265,12 @@
         byId.delete(id);
       }
     }
+    rebuildAllLinks();
     refreshHud();
   }
 
   function refreshHud() {
-    const total = byId.size + landscapeCells.size;
+    const total = byId.size + landscapeCells.size + linkObjects.size;
     hudCount.textContent = String(total);
     emptyState.classList.toggle('hidden', total > 0);
   }
@@ -621,8 +627,89 @@
     applyLandscapeFrame(parseInt(e.target.value, 10), false);
   });
 
+  // ---------- Links (edges between entities, for SARF / architecture maps) ----------
+
+  function disposeLinkObject(group) {
+    group.traverse((c) => {
+      if (c.geometry) c.geometry.dispose();
+      if (c.material) {
+        if (c.material.map) c.material.map.dispose();
+        c.material.dispose();
+      }
+    });
+    linkRoot.remove(group);
+  }
+
+  function buildLinkObject(def) {
+    const fromMesh = byId.get(def.fromId);
+    const toMesh = byId.get(def.toId);
+    if (!fromMesh || !toMesh) return null;
+    const a = new THREE.Vector3(); fromMesh.getWorldPosition(a);
+    const b = new THREE.Vector3(); toMesh.getWorldPosition(b);
+    if (a.distanceTo(b) < 1e-4) return null;
+
+    const group = new THREE.Group();
+    const color = new THREE.Color(def.color || '#7d8590');
+    const opacity = def.opacity == null ? 1 : def.opacity;
+    const transparent = opacity < 1;
+
+    const lineGeom = new THREE.BufferGeometry().setFromPoints([a, b]);
+    const lineMat = new THREE.LineBasicMaterial({ color, transparent, opacity });
+    group.add(new THREE.Line(lineGeom, lineMat));
+
+    if (def.arrow) {
+      const dir = new THREE.Vector3().subVectors(b, a).normalize();
+      const dist = a.distanceTo(b);
+      const arrowLen = Math.min(0.45, Math.max(0.12, dist * 0.08));
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(arrowLen * 0.45, arrowLen, 14),
+        new THREE.MeshStandardMaterial({ color, transparent, opacity, metalness: 0.1, roughness: 0.5 }),
+      );
+      // Cone defaults to +Y; rotate so its tip points along dir, then place tip at b.
+      cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      cone.position.copy(b).addScaledVector(dir, -arrowLen / 2);
+      group.add(cone);
+    }
+
+    if (def.label) {
+      const sprite = makeLabelSprite(def.label);
+      sprite.position.copy(a).lerp(b, 0.5).add(new THREE.Vector3(0, 0.35, 0));
+      sprite.scale.set(1.2, 0.3, 1);
+      group.add(sprite);
+    }
+
+    linkRoot.add(group);
+    return group;
+  }
+
+  function rebuildAllLinks() {
+    linkObjects.forEach(disposeLinkObject);
+    linkObjects.clear();
+    linkDefs.forEach((def) => {
+      const obj = buildLinkObject(def);
+      if (obj) linkObjects.set(def.id, obj);
+    });
+  }
+
+  function setLinks(payload) {
+    const incoming = payload && Array.isArray(payload.links) ? payload.links : [];
+    linkDefs.clear();
+    incoming.forEach((def) => {
+      if (def && def.id) linkDefs.set(def.id, def);
+    });
+    rebuildAllLinks();
+    refreshHud();
+  }
+
+  function clearLinks() {
+    linkDefs.clear();
+    rebuildAllLinks();
+    refreshHud();
+  }
+
   window.Spatial = {
     setScene, focus, focusEntity, speak, narrate, highlight, recenter, fit,
     setLandscape, clearLandscape,
+    setLinks, clearLinks,
   };
 })();

@@ -7,6 +7,8 @@ import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
 import dev.spatial.scene.LandscapeTimeline
+import dev.spatial.scene.Link
+import dev.spatial.scene.LinkSet
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import kotlinx.serialization.encodeToString
@@ -29,6 +31,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         fun onNarrate(req: Narrate) {}
         fun onHighlight(req: Highlight) {}
         fun onLandscape(timeline: LandscapeTimeline?) {}
+        fun onLinksChanged(links: List<Link>) {}
     }
 
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -41,10 +44,15 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
     var landscape: LandscapeTimeline? = null
         private set
 
+    @Volatile
+    var links: List<Link> = emptyList()
+        private set
+
     fun addListener(listener: Listener) {
         listeners += listener
         listener.onSceneChanged(scene)
         landscape?.let(listener::onLandscape)
+        if (links.isNotEmpty()) listener.onLinksChanged(links)
     }
 
     fun removeListener(listener: Listener) {
@@ -95,6 +103,22 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
     fun clearLandscape() {
         landscape = null
         listeners.forEach { it.onLandscape(null) }
+    }
+
+    fun pushLinks(newLinks: List<Link>, merge: Boolean = false) {
+        links = if (merge) {
+            val byId = links.associateBy { it.id }.toMutableMap()
+            newLinks.forEach { byId[it.id] = it }
+            byId.values.toList()
+        } else {
+            newLinks
+        }
+        listeners.forEach { it.onLinksChanged(links) }
+    }
+
+    fun clearLinks() {
+        links = emptyList()
+        listeners.forEach { it.onLinksChanged(emptyList()) }
     }
 
     companion object {

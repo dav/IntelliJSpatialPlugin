@@ -32,6 +32,25 @@ data class Vec3(val x: Float, val y: Float, val z: Float) {
 @Serializable
 data class Scene(val entities: List<Entity>)
 
+/**
+ * Edge between two entities for SARF / architecture-map style views.
+ * Endpoints are looked up by entity id at render time; links pointing at
+ * missing entities are silently skipped (so push order doesn't matter).
+ */
+@Serializable
+data class Link(
+    val id: String,
+    val fromId: String,
+    val toId: String,
+    val color: String = "#7d8590",
+    val label: String? = null,
+    val arrow: Boolean = false,
+    val opacity: Float = 1f,
+)
+
+@Serializable
+data class LinkSet(val links: List<Link>)
+
 @Serializable
 data class CameraFocus(
     val target: Vec3,

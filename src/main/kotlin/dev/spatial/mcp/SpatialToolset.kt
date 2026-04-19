@@ -13,6 +13,7 @@ import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
 import dev.spatial.scene.LandscapeTimeline
+import dev.spatial.scene.Link
 import dev.spatial.scene.Narrate
 import dev.spatial.service.SceneService
 import java.nio.file.Path
@@ -166,6 +167,33 @@ class SpatialToolset : McpToolset {
         return SimpleResult(ok = true)
     }
 
+    @McpTool(name = "spatial_push_links")
+    @McpDescription(
+        "Render edges between entities — for SARF / architecture maps, dependency graphs, " +
+            "service maps, etc. Each link references two entity ids. Links pointing at missing " +
+            "entities are silently skipped, so push order doesn't matter. Set merge=true to keep " +
+            "existing links and upsert by id; default replaces the whole link set."
+    )
+    suspend fun spatial_push_links(
+        @McpDescription("Edges to render. Each: {id, fromId, toId, color?, label?, arrow?, opacity?}.")
+        links: List<Link>,
+        @McpDescription("Keep existing links and upsert by id. Default false (full replace).")
+        merge: Boolean = false,
+    ): LinkResult {
+        val project = currentCoroutineContext().project
+        val service = project.service<SceneService>()
+        service.pushLinks(links, merge = merge)
+        return LinkResult(count = service.links.size)
+    }
+
+    @McpTool(name = "spatial_clear_links")
+    @McpDescription("Remove all links. Entities and landscape are unaffected.")
+    suspend fun spatial_clear_links(): SimpleResult {
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().clearLinks()
+        return SimpleResult(ok = true)
+    }
+
     @McpTool(name = "spatial_push_repo_churn")
     @McpDescription(
         "Analyze a git repository's history and push a churn landscape to the Spatial view in one " +
@@ -248,6 +276,9 @@ class SpatialToolset : McpToolset {
 
     @Serializable
     data class PushResult(val count: Int)
+
+    @Serializable
+    data class LinkResult(val count: Int)
 
     @Serializable
     data class SimpleResult(val ok: Boolean)

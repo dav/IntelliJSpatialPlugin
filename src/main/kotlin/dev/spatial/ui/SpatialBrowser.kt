@@ -13,6 +13,8 @@ import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
 import dev.spatial.scene.LandscapeTimeline
+import dev.spatial.scene.Link
+import dev.spatial.scene.LinkSet
 import dev.spatial.scene.Narrate
 import dev.spatial.scene.Scene
 import dev.spatial.service.SceneService
@@ -108,6 +110,10 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         } else {
             runInBrowser("window.Spatial.setLandscape(${SceneService.encode(timeline)})")
         }
+    }
+
+    override fun onLinksChanged(links: List<Link>) {
+        runInBrowser("window.Spatial.setLinks(${SceneService.encode(LinkSet(links))})")
     }
 
     override fun dispose() {
