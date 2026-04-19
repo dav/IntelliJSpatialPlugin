@@ -13,6 +13,14 @@
   const emptyState = document.getElementById('empty');
   const speech = document.getElementById('speech');
   const notice = document.getElementById('notice');
+  const controlsEl = document.getElementById('controls');
+  const controlsTitle = document.getElementById('controls-title');
+  const controlsValue = document.getElementById('controls-value');
+  const controlsTurnLeft = document.getElementById('controls-turn-left');
+  const controlsTurnRight = document.getElementById('controls-turn-right');
+  const controlsForward = document.getElementById('controls-forward');
+  const controlsBackward = document.getElementById('controls-backward');
+  const controlsClose = document.getElementById('controls-close');
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1e1f22);
@@ -41,7 +49,10 @@
   scene.add(entityRoot);
   const labelRoot = new THREE.Group();
   scene.add(labelRoot);
+  const interactionRoot = new THREE.Group();
+  scene.add(interactionRoot);
   const byId = new Map();
+  const entityDefs = new Map();
   const raycaster = new THREE.Raycaster();
   const pointerNdc = new THREE.Vector2();
   const singleClickDelayMs = 300;
@@ -63,6 +74,13 @@
   const scrubEl = document.getElementById('scrub');
   const scrubRange = document.getElementById('scrub-range');
   const scrubLabel = document.getElementById('scrub-label');
+  let interactionConfig = null;
+  const controlDefs = new Map();
+  const controlStateById = new Map();
+  const controlIdByEntityId = new Map();
+  const valueStateById = new Map();
+  let selectedControlId = null;
+  const interactionLines = new Map();
 
   function resize() {
     const w = stage.clientWidth || window.innerWidth;
@@ -219,6 +237,96 @@
     return Number.isFinite(value) ? value : null;
   }
 
+  function normalizeAngleDeg(angle) {
+    let normalized = angle % 360;
+    if (normalized <= -180) normalized += 360;
+    if (normalized > 180) normalized -= 360;
+    return normalized;
+  }
+
+  function currentEntityPosition(entityId) {
+    const controlId = controlIdByEntityId.get(entityId);
+    if (controlId) {
+      const state = controlStateById.get(controlId);
+      const entity = entityDefs.get(entityId);
+      if (state && entity) {
+        return {
+          x: state.x,
+          y: (entity.position && entity.position.y) || 0,
+          z: state.z,
+        };
+      }
+    }
+    const entity = entityDefs.get(entityId);
+    return entity && entity.position ? entity.position : { x: 0, y: 0, z: 0 };
+  }
+
+  function currentEntityHeadingDeg(entityId) {
+    const controlId = controlIdByEntityId.get(entityId);
+    if (controlId) {
+      const state = controlStateById.get(controlId);
+      if (state) return state.headingDeg;
+    }
+    const entity = entityDefs.get(entityId);
+    const radians = entity && entity.rotation ? (entity.rotation.y || 0) : 0;
+    return THREE.MathUtils.radToDeg(radians);
+  }
+
+  function boundValueNodeIds() {
+    const ids = new Set();
+    if (!interactionConfig) return ids;
+    (interactionConfig.raySensors || []).forEach((binding) => {
+      (binding.valueNodeEntityIds || []).forEach((id) => ids.add(id));
+    });
+    (interactionConfig.bearingSensors || []).forEach((binding) => {
+      (binding.valueNodeEntityIds || []).forEach((id) => ids.add(id));
+      if (binding.distanceNodeEntityId) ids.add(binding.distanceNodeEntityId);
+    });
+    return ids;
+  }
+
+  function updateControlPanel() {
+    const control = selectedControlId ? controlDefs.get(selectedControlId) : null;
+    const state = selectedControlId ? controlStateById.get(selectedControlId) : null;
+    if (!control || !state || control.showUi === false) {
+      controlsEl.classList.remove('visible');
+      return;
+    }
+    controlsTitle.textContent = control.label || control.entityId;
+    controlsValue.textContent = `x ${state.x.toFixed(2)} · z ${state.z.toFixed(2)} · heading ${Math.round(normalizeAngleDeg(state.headingDeg))}°`;
+    controlsEl.classList.add('visible');
+  }
+
+  function selectControl(controlId) {
+    selectedControlId = controlId && controlDefs.has(controlId) ? controlId : null;
+    updateControlPanel();
+    sendInteractionState();
+  }
+
+  function makeInteractionSnapshot() {
+    return {
+      selectedControlId,
+      controls: Array.from(controlStateById.values()).map((state) => ({
+        id: state.id,
+        entityId: state.entityId,
+        x: state.x,
+        z: state.z,
+        headingDeg: state.headingDeg,
+      })),
+      values: Array.from(valueStateById.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([id, value]) => ({ id, value })),
+    };
+  }
+
+  function sendInteractionState() {
+    if (typeof window.__spatialSend !== 'function') return;
+    window.__spatialSend(JSON.stringify({
+      type: 'interaction-state',
+      interactionState: makeInteractionSnapshot(),
+    }));
+  }
+
   function updateOpenBinding(mesh, entity) {
     const meta = entity.meta || {};
     mesh.userData.spatialMeta = meta;
@@ -303,6 +411,12 @@
   function handleSingleClickAtClientPoint(clientX, clientY) {
     const target = pickSpatialObjectAtClientPoint(clientX, clientY);
     if (!target) return;
+    const spatialId = target.userData ? target.userData.spatialId : null;
+    const controlId = spatialId ? controlIdByEntityId.get(spatialId) : null;
+    if (controlId) {
+      selectControl(controlId);
+      if (!(target.userData && target.userData.spatialPath)) return;
+    }
     if (target.userData && target.userData.spatialPath) {
       sendOpenRequest(target);
       return;
@@ -465,8 +579,8 @@
     };
   }
 
-  function entityTopY(entity) {
-    const p = entity.position || { x: 0, y: 0, z: 0 };
+  function entityTopY(entity, overridePosition) {
+    const p = overridePosition || entity.position || { x: 0, y: 0, z: 0 };
     const s = entity.scale || { x: 1, y: 1, z: 1 };
     switch ((entity.kind || 'box').toLowerCase()) {
       case 'sphere':
@@ -481,21 +595,32 @@
     }
   }
 
-  function syncLabel(mesh, entity) {
+  function syncLabel(mesh, entity, overridePosition) {
+    const labelText = mesh.userData.dynamicLabelText != null ? mesh.userData.dynamicLabelText : entity.label;
     const existing = mesh.userData.label;
+    if (existing && existing.text === (labelText || '')) {
+      const p = overridePosition || entity.position || { x: 0, y: 0, z: 0 };
+      const labelScale = existing.sprite.userData.labelWorldScale || { width: 1.8, height: 0.45 };
+      existing.sprite.position.set(
+        p.x || 0,
+        entityTopY(entity, overridePosition) + labelScale.height / 2 + 0.14,
+        p.z || 0,
+      );
+      return;
+    }
     if (existing) {
       labelRoot.remove(existing.sprite);
       existing.sprite.material.map.dispose();
       existing.sprite.material.dispose();
       mesh.userData.label = null;
     }
-    if (!entity.label) return;
-    const sprite = makeLabelSprite(entity.label, entityLabelOptions(entity));
-    const p = entity.position || { x: 0, y: 0, z: 0 };
+    if (!labelText) return;
+    const sprite = makeLabelSprite(labelText, entityLabelOptions(entity));
+    const p = overridePosition || entity.position || { x: 0, y: 0, z: 0 };
     const labelScale = sprite.userData.labelWorldScale || { width: 1.8, height: 0.45 };
     sprite.position.set(
       p.x || 0,
-      entityTopY(entity) + labelScale.height / 2 + 0.14,
+      entityTopY(entity, overridePosition) + labelScale.height / 2 + 0.14,
       p.z || 0,
     );
     sprite.userData.spatialId = entity.id;
@@ -505,7 +630,7 @@
     sprite.userData.spatialColumn = openColumnFromMeta(entity.meta || {});
     sprite.userData.spatialFocusObject = mesh;
     labelRoot.add(sprite);
-    mesh.userData.label = { text: entity.label, sprite };
+    mesh.userData.label = { text: labelText, sprite };
   }
 
   function applyTransform(mesh, entity) {
@@ -517,12 +642,93 @@
     mesh.scale.set(s.x || 1, s.y || 1, s.z || 1);
   }
 
+  function setDynamicLabelText(entityId, text) {
+    const mesh = byId.get(entityId);
+    const entity = entityDefs.get(entityId);
+    if (!mesh || !entity) return;
+    mesh.userData.dynamicLabelText = text;
+    const controlId = controlIdByEntityId.get(entityId);
+    const state = controlId ? controlStateById.get(controlId) : null;
+    const overridePosition = state ? { x: state.x, y: entity.position?.y || 0, z: state.z } : null;
+    syncLabel(mesh, entity, overridePosition);
+  }
+
+  function clearDynamicLabelText(entityId) {
+    const mesh = byId.get(entityId);
+    const entity = entityDefs.get(entityId);
+    if (!mesh || !entity) return;
+    delete mesh.userData.dynamicLabelText;
+    const controlId = controlIdByEntityId.get(entityId);
+    const state = controlId ? controlStateById.get(controlId) : null;
+    const overridePosition = state ? { x: state.x, y: entity.position?.y || 0, z: state.z } : null;
+    syncLabel(mesh, entity, overridePosition);
+  }
+
+  function applyControlPose(controlId) {
+    const control = controlDefs.get(controlId);
+    const state = controlStateById.get(controlId);
+    const mesh = control ? byId.get(control.entityId) : null;
+    const entity = control ? entityDefs.get(control.entityId) : null;
+    if (!control || !state || !mesh || !entity) return;
+    const p = entity.position || { x: 0, y: 0, z: 0 };
+    const r = entity.rotation || { x: 0, y: 0, z: 0 };
+    const s = entity.scale || { x: 1, y: 1, z: 1 };
+    mesh.position.set(state.x, p.y || 0, state.z);
+    mesh.rotation.set(r.x || 0, THREE.MathUtils.degToRad(state.headingDeg), r.z || 0);
+    mesh.scale.set(s.x || 1, s.y || 1, s.z || 1);
+    syncLabel(mesh, entity, { x: state.x, y: p.y || 0, z: state.z });
+  }
+
+  function clearInteractionLines() {
+    interactionLines.forEach((line) => {
+      if (line.geometry) line.geometry.dispose();
+      if (line.material) line.material.dispose();
+      interactionRoot.remove(line);
+    });
+    interactionLines.clear();
+  }
+
+  function resetValueNodeVisual(entityId) {
+    const mesh = byId.get(entityId);
+    const entity = entityDefs.get(entityId);
+    if (!mesh || !entity) return;
+    const baseScale = entity.scale || { x: 1, y: 1, z: 1 };
+    mesh.scale.set(baseScale.x || 1, baseScale.y || 1, baseScale.z || 1);
+    mesh.material.color.copy(mesh.userData.baseColor || new THREE.Color(entity.color || '#9aa0a6'));
+    clearDynamicLabelText(entityId);
+  }
+
+  function applyValueNodeVisual(entityId, value) {
+    const mesh = byId.get(entityId);
+    const entity = entityDefs.get(entityId);
+    if (!mesh || !entity) return;
+    const clamped = Math.max(0, Math.min(1, value));
+    const baseScale = entity.scale || { x: 1, y: 1, z: 1 };
+    const scaleMultiplier = 0.78 + clamped * 0.82;
+    mesh.scale.set(
+      (baseScale.x || 1) * scaleMultiplier,
+      (baseScale.y || 1) * scaleMultiplier,
+      (baseScale.z || 1) * scaleMultiplier,
+    );
+    const cold = new THREE.Color('#4c5561');
+    const hot = new THREE.Color('#ffd166');
+    mesh.material.color.copy(cold.lerp(new THREE.Color(mesh.userData.baseColor || entity.color || '#9aa0a6'), 0.35).lerp(hot, clamped * 0.65));
+    const baseLabel = entity.label || entityId;
+    setDynamicLabelText(entityId, `${baseLabel}\n${clamped.toFixed(2)}`);
+  }
+
+  function resetAllValueNodes() {
+    boundValueNodeIds().forEach((entityId) => resetValueNodeVisual(entityId));
+    valueStateById.clear();
+  }
+
   function setScene(payload) {
     const incoming = payload && Array.isArray(payload.entities) ? payload.entities : [];
     const seen = new Set();
     incoming.forEach((entity) => {
       if (!entity || !entity.id) return;
       seen.add(entity.id);
+      entityDefs.set(entity.id, entity);
       let mesh = byId.get(entity.id);
       if (!mesh || mesh.userData.kind !== entity.kind) {
         if (mesh) {
@@ -561,7 +767,14 @@
         mesh.geometry.dispose();
         mesh.material.dispose();
         byId.delete(id);
+        entityDefs.delete(id);
       }
+    }
+    if (interactionConfig) {
+      initializeInteractionControls();
+      applyAllControlPoses();
+      recomputeInteractiveBindings();
+      updateControlPanel();
     }
     rebuildAllLinks();
     refreshHud();
@@ -624,6 +837,7 @@
     const box = new THREE.Box3();
     if (byId.size) box.union(new THREE.Box3().setFromObject(entityRoot));
     if (labelRoot.children.length) box.union(new THREE.Box3().setFromObject(labelRoot));
+    if (interactionRoot.children.length) box.union(new THREE.Box3().setFromObject(interactionRoot));
     if (landscapeCells.size) box.union(new THREE.Box3().setFromObject(landscapeRoot));
     if (box.isEmpty()) { recenter(); return; }
     const sphere = new THREE.Sphere();
@@ -636,8 +850,197 @@
     easeCamera(sphere.center.clone(), distance, null, null, 500);
   }
 
+  function initializeInteractionControls() {
+    const previousStates = new Map(controlStateById);
+    controlDefs.clear();
+    controlIdByEntityId.clear();
+    controlStateById.clear();
+    if (!interactionConfig) return;
+    (interactionConfig.controls || []).forEach((control) => {
+      const entity = entityDefs.get(control.entityId);
+      if (!entity) return;
+      controlDefs.set(control.id, control);
+      controlIdByEntityId.set(control.entityId, control.id);
+      const previous = previousStates.get(control.id);
+      const basePosition = entity.position || { x: 0, y: 0, z: 0 };
+      const baseHeading = THREE.MathUtils.radToDeg((entity.rotation && entity.rotation.y) || 0);
+      controlStateById.set(control.id, {
+        id: control.id,
+        entityId: control.entityId,
+        x: previous ? previous.x : (control.initialX != null ? control.initialX : (basePosition.x || 0)),
+        z: previous ? previous.z : (control.initialZ != null ? control.initialZ : (basePosition.z || 0)),
+        headingDeg: previous ? previous.headingDeg : (control.initialHeadingDeg != null ? control.initialHeadingDeg : baseHeading),
+      });
+    });
+    if (selectedControlId && !controlDefs.has(selectedControlId)) selectedControlId = null;
+    if (!selectedControlId) {
+      const firstVisibleControl = (interactionConfig.controls || []).find((control) => control.showUi !== false);
+      selectedControlId = firstVisibleControl ? firstVisibleControl.id : null;
+    }
+  }
+
+  function applyAllControlPoses() {
+    controlDefs.forEach((_, controlId) => applyControlPose(controlId));
+  }
+
+  function clampControlState(control, state) {
+    const bounds = control.bounds || {};
+    return {
+      id: state.id,
+      entityId: state.entityId,
+      x: Math.min(bounds.maxX ?? state.x, Math.max(bounds.minX ?? state.x, state.x)),
+      z: Math.min(bounds.maxZ ?? state.z, Math.max(bounds.minZ ?? state.z, state.z)),
+      headingDeg: normalizeAngleDeg(state.headingDeg),
+    };
+  }
+
+  function applyControlAction(controlId, action) {
+    const control = controlDefs.get(controlId);
+    const state = controlStateById.get(controlId);
+    if (!control || !state) return;
+    const headingRad = THREE.MathUtils.degToRad(state.headingDeg);
+    const next = { ...state };
+    switch (action) {
+      case 'turn-left':
+        next.headingDeg -= control.rotateStepDeg || 15;
+        break;
+      case 'turn-right':
+        next.headingDeg += control.rotateStepDeg || 15;
+        break;
+      case 'forward':
+        next.x += Math.cos(headingRad) * (control.moveStep || 0.5);
+        next.z += Math.sin(headingRad) * (control.moveStep || 0.5);
+        break;
+      case 'backward':
+        next.x -= Math.cos(headingRad) * (control.moveStep || 0.5);
+        next.z -= Math.sin(headingRad) * (control.moveStep || 0.5);
+        break;
+      default:
+        return;
+    }
+    const clamped = clampControlState(control, next);
+    controlStateById.set(controlId, clamped);
+    applyControlPose(controlId);
+    recomputeInteractiveBindings();
+    updateControlPanel();
+    sendInteractionState();
+  }
+
+  function addOrUpdateInteractionLine(id, start, end, color) {
+    let line = interactionLines.get(id);
+    if (!line) {
+      const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+      const material = new THREE.LineBasicMaterial({ color: new THREE.Color(color || '#8dd3ff'), transparent: true, opacity: 0.95 });
+      line = new THREE.Line(geometry, material);
+      interactionLines.set(id, line);
+      interactionRoot.add(line);
+      return;
+    }
+    line.geometry.dispose();
+    line.geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+    line.material.color.set(color || '#8dd3ff');
+  }
+
+  function computeRaySensorBindings() {
+    (interactionConfig.raySensors || []).forEach((binding) => {
+      const control = controlDefs.get(binding.controlId);
+      const state = controlStateById.get(binding.controlId);
+      if (!control || !state) return;
+      const originY = ((entityDefs.get(control.entityId)?.position || {}).y || 0) + 0.18;
+      const origin = new THREE.Vector3(state.x, originY, state.z);
+      const wallMeshes = (binding.wallEntityIds || [])
+        .map((entityId) => byId.get(entityId))
+        .filter(Boolean);
+      (binding.anglesDeg || []).forEach((angleDeg, index) => {
+        const direction = new THREE.Vector3(
+          Math.cos(THREE.MathUtils.degToRad(state.headingDeg + angleDeg)),
+          0,
+          Math.sin(THREE.MathUtils.degToRad(state.headingDeg + angleDeg)),
+        ).normalize();
+        const sensorRay = new THREE.Raycaster(origin, direction, 0, binding.maxDistance || 10);
+        const hits = sensorRay.intersectObjects(wallMeshes, true);
+        const hit = hits.find((candidate) => candidate.distance >= 0);
+        const distance = hit ? hit.distance : (binding.maxDistance || 10);
+        const valueMode = (binding.valueMode || 'proximity').toLowerCase();
+        const normalizedDistance = Math.max(0, Math.min(1, distance / Math.max(binding.maxDistance || 1, 0.001)));
+        const value = valueMode === 'distance' ? normalizedDistance : 1 - normalizedDistance;
+        const end = hit
+          ? hit.point.clone()
+          : origin.clone().addScaledVector(direction, binding.maxDistance || 10);
+        addOrUpdateInteractionLine(`ray:${binding.id}:${index}`, origin, end, hit ? binding.lineColor : binding.missColor);
+        valueStateById.set(`ray:${binding.id}:${index}`, value);
+        const nodeId = (binding.valueNodeEntityIds || [])[index];
+        if (nodeId) applyValueNodeVisual(nodeId, value);
+      });
+    });
+  }
+
+  function computeBearingSensorBindings() {
+    (interactionConfig.bearingSensors || []).forEach((binding) => {
+      const control = controlDefs.get(binding.controlId);
+      const state = controlStateById.get(binding.controlId);
+      const targetEntity = entityDefs.get(binding.targetEntityId);
+      if (!control || !state || !targetEntity) return;
+      const targetPosition = currentEntityPosition(binding.targetEntityId);
+      const dx = (targetPosition.x || 0) - state.x;
+      const dz = (targetPosition.z || 0) - state.z;
+      const distance = Math.hypot(dx, dz);
+      const worldAngle = THREE.MathUtils.radToDeg(Math.atan2(dz, dx));
+      const relativeBearing = normalizeAngleDeg(worldAngle - state.headingDeg);
+      (binding.sectorCenterAnglesDeg || []).forEach((centerDeg, index) => {
+        const delta = Math.abs(normalizeAngleDeg(relativeBearing - centerDeg));
+        const falloff = Math.max(binding.falloffDeg || 1, 1);
+        const value = Math.max(0, 1 - delta / falloff);
+        valueStateById.set(`bearing:${binding.id}:${index}`, value);
+        const nodeId = (binding.valueNodeEntityIds || [])[index];
+        if (nodeId) applyValueNodeVisual(nodeId, value);
+      });
+      if (binding.distanceNodeEntityId) {
+        const normalizedDistance = Math.max(0, Math.min(1, distance / Math.max(binding.distanceMax || 1, 0.001)));
+        const valueMode = (binding.distanceValueMode || 'proximity').toLowerCase();
+        const value = valueMode === 'distance' ? normalizedDistance : 1 - normalizedDistance;
+        valueStateById.set(`bearing:${binding.id}:distance`, value);
+        applyValueNodeVisual(binding.distanceNodeEntityId, value);
+      }
+    });
+  }
+
+  function recomputeInteractiveBindings() {
+    clearInteractionLines();
+    resetAllValueNodes();
+    if (!interactionConfig) return;
+    computeRaySensorBindings();
+    computeBearingSensorBindings();
+  }
+
+  function setInteractions(config) {
+    interactionConfig = config || { controls: [], raySensors: [], bearingSensors: [] };
+    initializeInteractionControls();
+    applyAllControlPoses();
+    recomputeInteractiveBindings();
+    updateControlPanel();
+    sendInteractionState();
+  }
+
+  function clearInteractions() {
+    interactionConfig = null;
+    controlDefs.clear();
+    controlStateById.clear();
+    controlIdByEntityId.clear();
+    selectedControlId = null;
+    clearInteractionLines();
+    resetAllValueNodes();
+    updateControlPanel();
+    sendInteractionState();
+  }
+
   document.getElementById('btn-recenter').addEventListener('click', recenter);
   document.getElementById('btn-fit').addEventListener('click', fit);
+  controlsTurnLeft.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'turn-left'));
+  controlsTurnRight.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'turn-right'));
+  controlsForward.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'forward'));
+  controlsBackward.addEventListener('click', () => selectedControlId && applyControlAction(selectedControlId, 'backward'));
+  controlsClose.addEventListener('click', () => selectControl(null));
 
   let speechTimer = null;
   function showCaption(text) {
@@ -1169,6 +1572,7 @@
   window.Spatial = {
     setScene, focus, focusEntity, speak, narrate, highlight, playTour, recenter, fit,
     setLandscape, clearLandscape,
+    setInteractions, clearInteractions,
     setLinks, clearLinks,
   };
 })();

@@ -6,6 +6,8 @@ import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.InteractionConfig
+import dev.spatial.scene.InteractionState
 import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.LinkSet
@@ -34,6 +36,7 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
         fun onPlayTour(req: TourRequest) {}
         fun onLandscape(timeline: LandscapeTimeline?) {}
         fun onLinksChanged(links: List<Link>) {}
+        fun onInteractionConfig(config: InteractionConfig?) {}
     }
 
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -50,11 +53,20 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
     var links: List<Link> = emptyList()
         private set
 
+    @Volatile
+    var interactionConfig: InteractionConfig? = null
+        private set
+
+    @Volatile
+    var interactionState: InteractionState = InteractionState()
+        private set
+
     fun addListener(listener: Listener) {
         listeners += listener
         listener.onSceneChanged(scene)
         landscape?.let(listener::onLandscape)
         if (links.isNotEmpty()) listener.onLinksChanged(links)
+        interactionConfig?.let(listener::onInteractionConfig)
     }
 
     fun removeListener(listener: Listener) {
@@ -125,6 +137,22 @@ class SceneService(@Suppress("UNUSED_PARAMETER") project: Project) {
     fun clearLinks() {
         links = emptyList()
         listeners.forEach { it.onLinksChanged(emptyList()) }
+    }
+
+    fun setInteractionConfig(config: InteractionConfig) {
+        interactionConfig = config
+        interactionState = InteractionState()
+        listeners.forEach { it.onInteractionConfig(config) }
+    }
+
+    fun clearInteractions() {
+        interactionConfig = null
+        interactionState = InteractionState()
+        listeners.forEach { it.onInteractionConfig(null) }
+    }
+
+    fun updateInteractionState(state: InteractionState) {
+        interactionState = state
     }
 
     companion object {

@@ -4,6 +4,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import dev.spatial.scene.InteractionState
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlinx.serialization.SerialName
@@ -17,11 +18,13 @@ data class SpatialBridgeMessage(
     val path: String? = null,
     val line: Int? = null,
     val column: Int? = null,
+    val interactionState: InteractionState? = null,
 )
 
 object SpatialSceneBridge {
 
     const val TYPE_OPEN_FILE = "open-file"
+    const val TYPE_INTERACTION_STATE = "interaction-state"
 
     fun resolvePath(projectBasePath: String?, rawPath: String?): Path? {
         val trimmed = rawPath?.trim()?.takeIf { it.isNotEmpty() } ?: return null

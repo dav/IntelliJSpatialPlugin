@@ -14,6 +14,8 @@ import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.Entity
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.InteractionConfig
+import dev.spatial.scene.InteractionState
 import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.Narrate
@@ -146,6 +148,51 @@ class SpatialToolset : McpToolset {
     ): SimpleResult {
         val project = currentCoroutineContext().project
         project.service<SceneService>().highlight(Highlight(entityIds, durationMs, color))
+        return SimpleResult(ok = true)
+    }
+
+    @McpTool(name = "spatial_configure_interactions")
+    @McpDescription(
+        "Register generic interactive controls and derived bindings for the current scene. " +
+            "Use this to let the user manipulate entities such as a robot pose in real time while the browser " +
+            "computes local ray sensors, target-bearing sectors, and node-value updates without round-tripping " +
+            "through the agent."
+    )
+    suspend fun spatial_configure_interactions(
+        @McpDescription(
+            "Interaction contract. Controls declare user-manipulable entities such as pose2d robots; raySensors " +
+                "cast local rays against wall entity ids and can drive value-node entities; bearingSensors derive " +
+                "target-relative sector and distance values and can drive other node entities."
+        )
+        config: InteractionConfig,
+        @McpDescription("Reveal the Spatial tool window if hidden. Default true.")
+        reveal: Boolean = true,
+    ): InteractionConfigResult {
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().setInteractionConfig(config)
+        if (reveal) revealToolWindow()
+        return InteractionConfigResult(
+            controls = config.controls.size,
+            raySensors = config.raySensors.size,
+            bearingSensors = config.bearingSensors.size,
+        )
+    }
+
+    @McpTool(name = "spatial_get_interaction_state")
+    @McpDescription(
+        "Read the latest interaction state reported by the Spatial browser. Use this after configuring controls " +
+            "to inspect the user's current pose, heading, and any derived sensor/radar values."
+    )
+    suspend fun spatial_get_interaction_state(): InteractionState {
+        val project = currentCoroutineContext().project
+        return project.service<SceneService>().interactionState
+    }
+
+    @McpTool(name = "spatial_clear_interactions")
+    @McpDescription("Remove all interactive controls and derived bindings from the current scene.")
+    suspend fun spatial_clear_interactions(): SimpleResult {
+        val project = currentCoroutineContext().project
+        project.service<SceneService>().clearInteractions()
         return SimpleResult(ok = true)
     }
 
@@ -481,6 +528,13 @@ class SpatialToolset : McpToolset {
         val nodes: Int,
         val links: Int,
         val focusEntityId: String,
+    )
+
+    @Serializable
+    data class InteractionConfigResult(
+        val controls: Int,
+        val raySensors: Int,
+        val bearingSensors: Int,
     )
 
     @Serializable

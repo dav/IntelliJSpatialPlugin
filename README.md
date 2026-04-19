@@ -54,6 +54,9 @@ Ships Three.js bundled offline. Requires IntelliJ IDEA 2025.2+ with JCEF.
 | `spatial_play_tour`            | Play a synchronized multi-stop tour with speech, focus, and highlight.  |
 | `spatial_push_links`           | Render edges between entity ids for dependency and architecture views.  |
 | `spatial_clear_links`          | Remove all links while leaving entities and landscapes intact.          |
+| `spatial_configure_interactions` | Register user controls and derived sensor/bearing bindings.          |
+| `spatial_get_interaction_state` | Read the latest control pose and derived binding values.              |
+| `spatial_clear_interactions`  | Remove all interactive controls and derived bindings.                   |
 | `spatial_push_project_structure` | Render the project as layered folder platters with file blocks.       |
 | `spatial_push_feed_forward_network` | Render a canonical feed-forward neural network from layers and weights. |
 | `spatial_push_churn_landscape` | Render a treemap-like churn landscape from per-file timeline data.      |
@@ -74,6 +77,26 @@ an explicit root path) and renders:
 File blocks carry path metadata so they can open in the IDE on click. Folder
 platters carry folder metadata so current-file focus can still land on the
 nearest container when needed.
+
+## Interactive Controls And Bindings
+
+For local manipulation demos, the preferred flow is:
+
+1. push ordinary scene entities such as a robot, maze walls, target, and neural nodes
+2. optionally push links or a canonical feed-forward network
+3. call `spatial_configure_interactions` with a generic interaction contract
+4. let the browser handle user manipulation and derived updates in real time
+5. call `spatial_get_interaction_state` when the agent needs the latest pose or sensor values
+
+The interaction contract is defined in
+[`src/main/kotlin/dev/spatial/scene/Interaction.kt`](src/main/kotlin/dev/spatial/scene/Interaction.kt)
+and currently supports:
+
+- `controls`: user-manipulable `pose2d` entities with move and rotate steps
+- `raySensors`: local raycasts from a controlled entity against wall entity ids, with optional value-node targets
+- `bearingSensors`: target-relative angular sectors and optional distance bindings, with optional value-node targets
+
+This is enough to build a robot/maze/target/neural-net experience generically, without a novelty-search-specific tool.
 
 ## Canonical Feed-Forward Network Contract
 

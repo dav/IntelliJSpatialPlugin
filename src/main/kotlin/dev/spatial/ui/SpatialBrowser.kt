@@ -12,6 +12,7 @@ import com.intellij.ui.jcef.JBCefJSQuery
 import dev.spatial.scene.CameraFocus
 import dev.spatial.scene.FocusEntity
 import dev.spatial.scene.Highlight
+import dev.spatial.scene.InteractionConfig
 import dev.spatial.scene.LandscapeTimeline
 import dev.spatial.scene.Link
 import dev.spatial.scene.LinkSet
@@ -22,6 +23,7 @@ import dev.spatial.service.SceneService
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
+import java.util.ArrayDeque
 import kotlinx.serialization.decodeFromString
 
 /**
@@ -45,8 +47,8 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
     @Volatile
     private var pageReady: Boolean = false
 
-    @Volatile
-    private var pending: Runnable? = null
+    private val pendingLock = Any()
+    private val pending = ArrayDeque<Runnable>()
 
     init {
         Disposer.register(parentDisposable, this)
@@ -64,6 +66,10 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
                         JBCefJSQuery.Response(null, 1, "Could not open file")
                     }
                 }
+                SpatialSceneBridge.TYPE_INTERACTION_STATE -> {
+                    message.interactionState?.let(sceneService::updateInteractionState)
+                    JBCefJSQuery.Response(null as String?)
+                }
                 else -> JBCefJSQuery.Response(null, 2, "Unsupported spatial bridge message")
             }
         }
@@ -72,8 +78,7 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
             override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
                 if (frame?.isMain == true) {
                     pageReady = true
-                    pending?.run()
-                    pending = null
+                    flushPending()
                 }
             }
         }, browser.cefBrowser)
@@ -132,6 +137,14 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         runInBrowser("window.Spatial.setLinks(${SceneService.encode(LinkSet(links))})")
     }
 
+    override fun onInteractionConfig(config: InteractionConfig?) {
+        if (config == null) {
+            runInBrowser("window.Spatial.clearInteractions()")
+        } else {
+            runInBrowser("window.Spatial.setInteractions(${SceneService.encode(config)})")
+        }
+    }
+
     override fun dispose() {
         sceneService.removeListener(this)
     }
@@ -140,7 +153,22 @@ class SpatialBrowser(project: Project, parentDisposable: Disposable) : SceneServ
         val invoke = Runnable {
             browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url ?: "", 0)
         }
-        if (pageReady) invoke.run() else pending = invoke
+        if (pageReady) {
+            invoke.run()
+            return
+        }
+        synchronized(pendingLock) {
+            if (pageReady) invoke.run() else pending.addLast(invoke)
+        }
+    }
+
+    private fun flushPending() {
+        while (true) {
+            val next = synchronized(pendingLock) {
+                if (pending.isEmpty()) null else pending.removeFirst()
+            } ?: return
+            next.run()
+        }
     }
 
     private fun loadResource(path: String): String =
